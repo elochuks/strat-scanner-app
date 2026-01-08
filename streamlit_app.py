@@ -38,8 +38,18 @@ def strat_type(prev, curr):
 st.title("📊 STRAT Candle Scanner (S&P 500)")
 
 # 1️⃣ Timeframe selection
-timeframe = st.selectbox("Select Timeframe", ["Daily", "Weekly", "Monthly"])
-interval_map = {"Daily": "1d", "Weekly": "1wk", "Monthly": "1mo"}
+timeframe = st.selectbox(
+    "Select Timeframe",
+    ["Daily", "Weekly", "2-Week", "Monthly"]
+)
+
+# Interval mapping for yfinance
+interval_map = {
+    "Daily": "1d",
+    "Weekly": "1wk",
+    "2-Week": "1wk",  # We'll combine 2 weekly candles manually
+    "Monthly": "1mo"
+}
 
 # 2️⃣ STRAT patterns selection
 available_patterns = ["1 (Inside)", "2U", "2D", "3 (Outside)"]
@@ -74,6 +84,26 @@ if scan_button:
                     interval=interval_map[timeframe],
                     progress=False
                 )
+
+                if data.shape[0] < 3:
+                    continue
+
+                # Handle 2-week timeframe by combining every 2 weekly candles
+                if timeframe == "2-Week":
+                    data_2w = []
+                    for i in range(0, len(data)-1, 2):
+                        # Combine 2 weeks
+                        slice_data = data.iloc[i:i+2]
+                        if slice_data.shape[0] < 2:
+                            continue
+                        combined = pd.Series({
+                            "Open": slice_data["Open"].iloc[0],
+                            "High": slice_data["High"].max(),
+                            "Low": slice_data["Low"].min(),
+                            "Close": slice_data["Close"].iloc[-1]
+                        })
+                        data_2w.append(combined)
+                    data = pd.DataFrame(data_2w)
 
                 if data.shape[0] < 3:
                     continue
