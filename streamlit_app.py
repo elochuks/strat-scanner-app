@@ -123,4 +123,3 @@ if scan_button:
         st.dataframe(df, use_container_width=True)
     else:
         st.warning("No stocks found matching the selected pattern(s).")
-
