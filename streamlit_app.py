@@ -3,8 +3,7 @@ import yfinance as yf
 import pandas as pd
 
 st.set_page_config(page_title="STRAT Scanner", layout="wide")
-
-st.title("📊 STRAT Scanner (Daily)")
+st.title("📊 STRAT Scanner (Daily / Weekly / Monthly)")
 
 # -------------------------
 # User Inputs
@@ -14,7 +13,12 @@ tickers_input = st.text_area(
     "AAPL,MSFT,NVDA,TSLA,SPY"
 )
 
-lookback = st.slider("Lookback days", 5, 60, 20)
+timeframe = st.selectbox(
+    "Select timeframe",
+    ["Daily", "Weekly", "Monthly"]
+)
+
+lookback = st.slider("Lookback candles", 10, 120, 40)
 
 tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
@@ -41,6 +45,30 @@ def classify_strat(df):
     return df
 
 # -------------------------
+# Resample for Weekly / Monthly
+# -------------------------
+def resample_ohlc(df, tf):
+    if tf == "Weekly":
+        return df.resample("W").agg({
+            "Open": "first",
+            "High": "max",
+            "Low": "min",
+            "Close": "last",
+            "Volume": "sum"
+        }).dropna()
+
+    if tf == "Monthly":
+        return df.resample("M").agg({
+            "Open": "first",
+            "High": "max",
+            "Low": "min",
+            "Close": "last",
+            "Volume": "sum"
+        }).dropna()
+
+    return df
+
+# -------------------------
 # Scan Logic
 # -------------------------
 results = []
@@ -49,8 +77,20 @@ if st.button("🔍 Run STRAT Scan"):
     with st.spinner("Scanning..."):
         for ticker in tickers:
             try:
-                df = yf.download(ticker, period=f"{lookback}d", interval="1d")
-                if df.empty or len(df) < 3:
+                df = yf.download(
+                    ticker,
+                    period="2y",
+                    interval="1d",
+                    progress=False
+                )
+
+                if df.empty:
+                    continue
+
+                df = resample_ohlc(df, timeframe)
+                df = df.tail(lookback)
+
+                if len(df) < 3:
                     continue
 
                 df = classify_strat(df)
@@ -73,20 +113,21 @@ if st.button("🔍 Run STRAT Scan"):
                 elif prev2.strat == "2U" and prev.strat == "1" and last.strat == "2D":
                     signal = "2-1-2 Bearish"
 
-                # Breakout
+                # Directional Break
                 elif last.strat in ["2U", "2D"]:
                     signal = f"Directional Break ({last.strat})"
 
                 if signal:
                     results.append({
                         "Ticker": ticker,
+                        "Timeframe": timeframe,
                         "Signal": signal,
-                        "Last Close": round(last.Close, 2),
+                        "Close": round(last.Close, 2),
                         "High": round(last.High, 2),
                         "Low": round(last.Low, 2)
                     })
 
-            except Exception as e:
+            except Exception:
                 st.warning(f"Error scanning {ticker}")
 
     if results:
@@ -94,4 +135,3 @@ if st.button("🔍 Run STRAT Scan"):
         st.dataframe(pd.DataFrame(results))
     else:
         st.info("No STRAT setups found.")
-
