@@ -4,33 +4,46 @@ import pandas as pd
 
 st.set_page_config(page_title="STRAT Scanner", layout="wide")
 
-# -----------------------------
-# LOAD S&P 500 FROM CSV
-# -----------------------------
+# --------------------------------------------------
+# LOAD SYMBOLS (S&P 500 + Indices + ETFs)
+# --------------------------------------------------
 @st.cache_data
-def load_sp500():
-    url = "https://datahub.io/core/s-and-p-500-companies/r/constituents.csv"
-    df = pd.read_csv(url)
+def load_symbols():
+    # S&P 500 CSV source
+    sp500_url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents_symbols.txt"
+    sp500 = pd.read_csv(sp500_url, header=None)[0].tolist()
 
-    # Convert tickers for yfinance compatibility
-    tickers = (
-        df["Symbol"]
-        .str.replace(".", "-", regex=False)  # BRK.B -> BRK-B
-        .unique()
-        .tolist()
-    )
-    return tickers
+    # Yahoo Finance uses '-' instead of '.'
+    sp500 = [s.replace(".", "-") for s in sp500]
 
-SP500 = load_sp500()
+    # Major Indices
+    indices = [
+        "^GSPC",   # S&P 500
+        "^NDX",    # Nasdaq 100
+        "^DJI",    # Dow Jones
+        "^RUT",    # Russell 2000
+        "^VIX"     # Volatility Index
+    ]
 
-# -----------------------------
-# STRAT CANDLE LOGIC
-# -----------------------------
+    # Popular ETFs
+    etfs = [
+        "SPY", "QQQ", "IWM", "DIA",
+        "XLK", "XLF", "XLE", "XLV",
+        "XLY", "XLP", "SMH", "ARKK"
+    ]
+
+    return sorted(list(set(sp500 + indices + etfs)))
+
+SYMBOLS = load_symbols()
+
+# --------------------------------------------------
+# STRAT LOGIC
+# --------------------------------------------------
 def strat_type(prev, curr):
-    prev_h = prev["High"].item()
-    prev_l = prev["Low"].item()
-    curr_h = curr["High"].item()
-    curr_l = curr["Low"].item()
+    prev_h = float(prev["High"])
+    prev_l = float(prev["Low"])
+    curr_h = float(curr["High"])
+    curr_l = float(curr["Low"])
 
     if curr_h < prev_h and curr_l > prev_l:
         return "1 (Inside)"
@@ -43,12 +56,11 @@ def strat_type(prev, curr):
     else:
         return "Undefined"
 
-# -----------------------------
+# --------------------------------------------------
 # UI
-# -----------------------------
-st.title("📊 STRAT Candle Scanner — S&P 500")
+# --------------------------------------------------
+st.title("📊 STRAT Multi-Timeframe Scanner")
 
-# Timeframe selection
 timeframe = st.selectbox(
     "Select Timeframe",
     ["4-Hour", "2-Day", "Daily", "2-Week", "Weekly", "Monthly", "3-Month"]
@@ -64,43 +76,41 @@ interval_map = {
     "3-Month": "3mo"
 }
 
-# STRAT pattern options
 available_patterns = ["1 (Inside)", "2U", "2D", "3 (Outside)"]
 
 st.subheader("STRAT Pattern Filters")
 
 prev_patterns = st.multiselect(
-    "Previous Candle Patterns",
-    options=available_patterns,
+    "Previous Candle Pattern(s)",
+    available_patterns,
     default=available_patterns
 )
 
 curr_patterns = st.multiselect(
-    "Current Candle Patterns",
-    options=available_patterns,
+    "Current Candle Pattern(s)",
+    available_patterns,
     default=available_patterns
 )
 
 scan_button = st.button("Run Scanner")
 
-# -----------------------------
+# --------------------------------------------------
 # SCANNER
-# -----------------------------
+# --------------------------------------------------
 if scan_button:
     results = []
 
-    with st.spinner("Scanning S&P 500 stocks..."):
-        for ticker in SP500:
+    with st.spinner("Scanning symbols..."):
+        for symbol in SYMBOLS:
             try:
                 data = yf.download(
-                    ticker,
+                    symbol,
                     period="12mo",
                     interval=interval_map[timeframe],
-                    progress=False,
-                    auto_adjust=False
+                    progress=False
                 )
 
-                if data.empty or len(data) < 3:
+                if data is None or len(data) < 3:
                     continue
 
                 prev_prev = data.iloc[-3]
@@ -112,20 +122,24 @@ if scan_button:
 
                 if ((not prev_patterns or prev_candle in prev_patterns) and
                     (not curr_patterns or curr_candle in curr_patterns)):
+
                     results.append({
-                        "Ticker": ticker,
+                        "Symbol": symbol,
                         "Previous Candle": prev_candle,
                         "Current Candle": curr_candle,
-                        "Direction": "Up" if curr["Close"].item() > curr["Open"].item() else "Down",
-                        "Close": round(curr["Close"].item(), 2)
+                        "Direction": "Up" if curr["Close"] > curr["Open"] else "Down",
+                        "Close": round(float(curr["Close"]), 2)
                     })
 
             except Exception:
                 continue
 
+    # --------------------------------------------------
+    # RESULTS
+    # --------------------------------------------------
     if results:
-        df = pd.DataFrame(results)
-        st.success(f"Found {len(df)} stocks matching criteria")
+        df = pd.DataFrame(results).sort_values("Symbol")
+        st.success(f"Found {len(df)} matches")
         st.dataframe(df, use_container_width=True)
     else:
-        st.warning("No stocks matched the selected STRAT criteria.")
+        st.warning("No matches found for selected criteria.")
