@@ -10,13 +10,14 @@ st.set_page_config(page_title="STRAT Scanner", layout="wide")
 SP500 = [
     "AAPL","MSFT","AMZN","NVDA","GOOGL","META","TSLA","BRK-B","JPM","JNJ",
     "V","PG","UNH","HD","MA","XOM","LLY","AVGO","PEP","COST",
+    # Add full list if needed
 ]
 
 # -----------------------------
 # STRAT CANDLE LOGIC
 # -----------------------------
 def strat_type(prev, curr):
-    # Ensure all values are scalar
+    # Make sure values are scalars
     prev_h = prev["High"].item() if hasattr(prev["High"], "item") else prev["High"]
     prev_l = prev["Low"].item() if hasattr(prev["Low"], "item") else prev["Low"]
     curr_h = curr["High"].item() if hasattr(curr["High"], "item") else curr["High"]
@@ -38,10 +39,8 @@ def strat_type(prev, curr):
 # -----------------------------
 st.title("📊 STRAT Candle Scanner (S&P 500)")
 
-timeframe = st.selectbox(
-    "Select Timeframe",
-    ["Daily", "Weekly", "Monthly"]
-)
+# 1️⃣ Select timeframe
+timeframe = st.selectbox("Select Timeframe", ["Daily", "Weekly", "Monthly"])
 
 interval_map = {
     "Daily": "1d",
@@ -49,6 +48,15 @@ interval_map = {
     "Monthly": "1mo"
 }
 
+# 2️⃣ Select STRAT pattern(s)
+available_patterns = ["1 (Inside)", "2U", "2D", "3 (Outside)"]
+selected_patterns = st.multiselect(
+    "Select STRAT Candle Pattern(s) to Scan",
+    options=available_patterns,
+    default=available_patterns  # default all patterns
+)
+
+# 3️⃣ Run button
 scan_button = st.button("Run Scanner")
 
 # -----------------------------
@@ -67,42 +75,35 @@ if scan_button:
                     progress=False
                 )
 
-                # Must have at least 3 rows to compute previous/current candles
                 if data.shape[0] < 3:
                     continue
 
-                # Use last 3 rows
+                # Last 3 candles
                 prev_prev = data.iloc[-3]
                 prev = data.iloc[-2]
                 curr = data.iloc[-1]
 
-                results.append({
-                    "Ticker": ticker,
-                    "Previous Candle": strat_type(prev_prev, prev),
-                    "Current Candle": strat_type(prev, curr),
-                    "Direction": "Up" if curr["Close"].item() > curr["Open"].item() else "Down",
-                    "Close Price": round(curr["Close"].item(), 2)
-                })
+                prev_candle = strat_type(prev_prev, prev)
+                curr_candle = strat_type(prev, curr)
+
+                # Only append if current candle matches selected patterns
+                if curr_candle in selected_patterns:
+                    results.append({
+                        "Ticker": ticker,
+                        "Previous Candle": prev_candle,
+                        "Current Candle": curr_candle,
+                        "Direction": "Up" if curr["Close"].item() > curr["Open"].item() else "Down",
+                        "Close Price": round(curr["Close"].item(), 2)
+                    })
 
             except Exception as e:
                 st.write(f"Error downloading {ticker}: {e}")
                 continue
 
+    # Display results
     if results:
         df = pd.DataFrame(results)
-        st.success(f"Scan complete — {len(df)} stocks found")
+        st.success(f"Scan complete — {len(df)} stocks found matching selected STRAT pattern(s)")
         st.dataframe(df, use_container_width=True)
-
-        if "Current Candle" in df.columns:
-            st.subheader("🔍 Filter Results")
-            candle_filter = st.multiselect(
-                "Filter by Current Candle",
-                options=df["Current Candle"].unique()
-            )
-            if candle_filter:
-                st.dataframe(
-                    df[df["Current Candle"].isin(candle_filter)],
-                    use_container_width=True
-                )
     else:
-        st.warning("No stock data available for the selected timeframe.")
+        st.warning("No stocks found matching the selected STRAT pattern(s).")
