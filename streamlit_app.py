@@ -10,14 +10,12 @@ st.set_page_config(page_title="STRAT Scanner", layout="wide")
 SP500 = [
     "AAPL","MSFT","AMZN","NVDA","GOOGL","META","TSLA","BRK-B","JPM","JNJ",
     "V","PG","UNH","HD","MA","XOM","LLY","AVGO","PEP","COST",
-    # Add full list if needed
 ]
 
 # -----------------------------
 # STRAT CANDLE LOGIC
 # -----------------------------
 def strat_type(prev, curr):
-    # Make sure values are scalars
     prev_h = prev["High"].item() if hasattr(prev["High"], "item") else prev["High"]
     prev_l = prev["Low"].item() if hasattr(prev["Low"], "item") else prev["Low"]
     curr_h = curr["High"].item() if hasattr(curr["High"], "item") else curr["High"]
@@ -39,24 +37,26 @@ def strat_type(prev, curr):
 # -----------------------------
 st.title("📊 STRAT Candle Scanner (S&P 500)")
 
-# 1️⃣ Select timeframe
+# 1️⃣ Timeframe selection
 timeframe = st.selectbox("Select Timeframe", ["Daily", "Weekly", "Monthly"])
+interval_map = {"Daily": "1d", "Weekly": "1wk", "Monthly": "1mo"}
 
-interval_map = {
-    "Daily": "1d",
-    "Weekly": "1wk",
-    "Monthly": "1mo"
-}
-
-# 2️⃣ Select STRAT pattern(s)
+# 2️⃣ STRAT patterns selection
 available_patterns = ["1 (Inside)", "2U", "2D", "3 (Outside)"]
-selected_patterns = st.multiselect(
-    "Select STRAT Candle Pattern(s) to Scan",
+
+st.subheader("Filter by STRAT Candle Pattern")
+prev_patterns = st.multiselect(
+    "Previous Candle",
     options=available_patterns,
-    default=available_patterns  # default all patterns
+    default=available_patterns
+)
+curr_patterns = st.multiselect(
+    "Current Candle",
+    options=available_patterns,
+    default=available_patterns
 )
 
-# 3️⃣ Run button
+# 3️⃣ Run Scanner
 scan_button = st.button("Run Scanner")
 
 # -----------------------------
@@ -86,8 +86,8 @@ if scan_button:
                 prev_candle = strat_type(prev_prev, prev)
                 curr_candle = strat_type(prev, curr)
 
-                # Only append if current candle matches selected patterns
-                if curr_candle in selected_patterns:
+                # Append only if both match selected filters
+                if prev_candle in prev_patterns and curr_candle in curr_patterns:
                     results.append({
                         "Ticker": ticker,
                         "Previous Candle": prev_candle,
