@@ -11,7 +11,7 @@ SP500 = [
     "AAPL","MSFT","AMZN","NVDA","META","GOOGL","GOOG","TSLA","BRK-B","JPM",
     "JNJ","V","XOM","PG","UNH","HD","MA","LLY","AVGO","MRK",
     "PEP","KO","COST","ABBV","ADBE","CRM","NFLX","WMT","ORCL","BAC"
-    # 👉 Expand to full S&P 500 if needed
+    # 🔹 Expand to full S&P 500 if desired
 ]
 
 # -----------------------
@@ -29,7 +29,8 @@ def get_data(symbol, timeframe):
         symbol,
         period=period,
         interval=interval,
-        progress=False
+        progress=False,
+        auto_adjust=False
     )
 
     return df.dropna()
@@ -83,12 +84,14 @@ if run_scan:
             try:
                 df = get_data(symbol, timeframe)
 
-                if len(df) < 3:
+                # Ensure enough candles
+                if len(df) < 4:
                     continue
 
-                prev2 = df.iloc[-3]
-                prev1 = df.iloc[-2]
-                curr = df.iloc[-1]
+                # USE LAST COMPLETED CANDLE
+                prev2 = df.iloc[-4]
+                prev1 = df.iloc[-3]   # previous candle
+                curr = df.iloc[-2]    # current completed candle
 
                 prev_pattern = strat_type(prev2, prev1)
                 curr_pattern = strat_type(prev1, curr)
@@ -101,7 +104,7 @@ if run_scan:
 
                 results.append({
                     "Symbol": symbol,
-                    "Prev Candle": prev_pattern,
+                    "Previous Candle": prev_pattern,
                     "Current Candle": curr_pattern,
                     "Close": round(curr.Close, 2),
                     "High": round(curr.High, 2),
@@ -113,7 +116,10 @@ if run_scan:
 
     if results:
         st.success(f"Found {len(results)} matches")
-        st.dataframe(pd.DataFrame(results), use_container_width=True)
+        st.dataframe(
+            pd.DataFrame(results),
+            use_container_width=True
+        )
     else:
         st.warning("No matches found")
 
