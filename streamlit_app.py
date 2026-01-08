@@ -1,96 +1,141 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 
 st.set_page_config(page_title="STRAT Scanner", layout="wide")
 
-st.title("📊 STRAT Scanner (Daily)")
+# ----------------------------
+# S&P 500 SYMBOL LIST (STATIC)
+# ----------------------------
+SP500 = [
+    "AAPL","MSFT","AMZN","NVDA","META","GOOGL","GOOG","TSLA","BRK-B","JPM",
+    "JNJ","V","XOM","PG","UNH","HD","MA","LLY","AVGO","MRK",
+    "PEP","KO","COST","ABBV","ADBE","CRM","NFLX","WMT","ORCL","BAC"
+    # ⬆ Add full S&P 500 list here if desired
+]
 
-# -------------------------
-# User Inputs
-# -------------------------
-tickers_input = st.text_area(
-    "Enter tickers (comma-separated)",
-    "AAPL,MSFT,NVDA,TSLA,SPY"
+# ----------------------------
+# DATA FETCHING
+# ----------------------------
+def fetch_data(symbol, interval):
+    period_map = {
+        "Daily": "6mo",
+        "Weekly": "2y",
+        "Monthly": "10y"
+    }
+
+    interval_map = {
+        "Daily": "1d",
+        "Weekly": "1wk",
+        "Monthly": "1mo"
+    }
+
+    df = yf.download(
+        symbol,
+        period=period_map[interval],
+        interval=interval_map[interval],
+        progress=False
+    )
+
+    return df.dropna()
+
+# ----------------------------
+# STRAT LOGIC
+# ----------------------------
+def strat_pattern(df):
+    if len(df) < 2:
+        return None
+
+    prev = df.iloc[-2]
+    curr = df.iloc[-1]
+
+    if curr.High < prev.High and curr.Low > prev.Low:
+        return "1"
+    if curr.High > prev.High and curr.Low >= prev.Low:
+        return "2U"
+    if curr.Low < prev.Low and curr.High <= prev.High:
+        return "2D"
+    if curr.High > prev.High and curr.Low < prev.Low:
+        return "3"
+
+    return None
+
+
+def strat_reversal(df):
+    if len(df) < 3:
+        return None
+
+    c1 = df.iloc[-3]
+    c2 = df.iloc[-2]
+    c3 = df.iloc[-1]
+
+    # 2-1-2 Bullish
+    if (
+        c2.High < c1.High and c2.Low > c1.Low and
+        c3.High > c2.High
+    ):
+        return "2-1-2U"
+
+    # 2-1-2 Bearish
+    if (
+        c2.High < c1.High and c2.Low > c1.Low and
+        c3.Low < c2.Low
+    ):
+        return "2-1-2D"
+
+    return None
+
+# ----------------------------
+# STREAMLIT UI
+# ----------------------------
+st.title("📊 STRAT Market Scanner")
+
+timeframe = st.selectbox(
+    "Select Timeframe",
+    ["Daily", "Weekly", "Monthly"]
 )
 
-lookback = st.slider("Lookback days", 5, 60, 20)
+patterns_selected = st.multiselect(
+    "Select STRAT Patterns",
+    ["1", "2U", "2D", "3", "2-1-2U", "2-1-2D"],
+    default=["2U", "2D"]
+)
 
-tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+scan_button = st.button("🚀 Run Scan")
 
-# -------------------------
-# STRAT Candle Classification
-# -------------------------
-def classify_strat(df):
-    df = df.copy()
-    df["strat"] = ""
+# ----------------------------
+# SCANNER
+# ----------------------------
+if scan_button:
+    results = []
 
-    for i in range(1, len(df)):
-        prev = df.iloc[i - 1]
-        curr = df.iloc[i]
-
-        if curr.High <= prev.High and curr.Low >= prev.Low:
-            df.iloc[i, df.columns.get_loc("strat")] = "1"
-        elif curr.High > prev.High and curr.Low < prev.Low:
-            df.iloc[i, df.columns.get_loc("strat")] = "3"
-        elif curr.High > prev.High:
-            df.iloc[i, df.columns.get_loc("strat")] = "2U"
-        elif curr.Low < prev.Low:
-            df.iloc[i, df.columns.get_loc("strat")] = "2D"
-
-    return df
-
-# -------------------------
-# Scan Logic
-# -------------------------
-results = []
-
-if st.button("🔍 Run STRAT Scan"):
-    with st.spinner("Scanning..."):
-        for ticker in tickers:
+    with st.spinner("Scanning S&P 500 stocks..."):
+        for symbol in SP500:
             try:
-                df = yf.download(ticker, period=f"{lookback}d", interval="1d")
-                if df.empty or len(df) < 3:
-                    continue
+                df = fetch_data(symbol, timeframe)
 
-                df = classify_strat(df)
+                base_pattern = strat_pattern(df)
+                reversal_pattern = strat_reversal(df)
 
-                last = df.iloc[-1]
-                prev = df.iloc[-2]
-                prev2 = df.iloc[-3]
+                detected = base_pattern or reversal_pattern
 
-                signal = None
-
-                # Inside Bar
-                if last.strat == "1":
-                    signal = "Inside Bar (1)"
-
-                # 2-1-2 Bullish
-                elif prev2.strat == "2D" and prev.strat == "1" and last.strat == "2U":
-                    signal = "2-1-2 Bullish"
-
-                # 2-1-2 Bearish
-                elif prev2.strat == "2U" and prev.strat == "1" and last.strat == "2D":
-                    signal = "2-1-2 Bearish"
-
-                # Breakout
-                elif last.strat in ["2U", "2D"]:
-                    signal = f"Directional Break ({last.strat})"
-
-                if signal:
+                if detected in patterns_selected:
                     results.append({
-                        "Ticker": ticker,
-                        "Signal": signal,
-                        "Last Close": round(last.Close, 2),
-                        "High": round(last.High, 2),
-                        "Low": round(last.Low, 2)
+                        "Symbol": symbol,
+                        "Pattern": detected,
+                        "Close": round(df.iloc[-1].Close, 2),
+                        "High": round(df.iloc[-1].High, 2),
+                        "Low": round(df.iloc[-1].Low, 2)
                     })
 
-            except Exception as e:
-                st.warning(f"Error scanning {ticker}")
+            except Exception:
+                continue
 
     if results:
-        st.subheader("📈 Scan Results")
+        st.success(f"Found {len(results)} matches")
         st.dataframe(pd.DataFrame(results))
     else:
-        st.info("No STRAT setups found.")
+        st.warning("No patterns found")
+
+st.caption("Powered by STRAT methodology | Data: Yahoo Finance")
