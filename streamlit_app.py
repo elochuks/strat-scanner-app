@@ -40,18 +40,25 @@ def strat_type(prev, curr):
 st.title("📊 STRAT Candle Scanner (S&P 500)")
 
 # 1️⃣ Select timeframe
-timeframe = st.selectbox("Select Timeframe", ["Daily", "Weekly", "Monthly"])
+timeframe = st.selectbox(
+    "Select Timeframe",
+    ["4-Hour", "2-Day", "Daily", "2-Week", "Weekly", "Monthly", "3-Month"]
+)
 
 interval_map = {
+    "4-Hour": "4h",
+    "2-Day": "2d",
     "Daily": "1d",
+    "2-Week": "2wk",
     "Weekly": "1wk",
-    "Monthly": "1mo"
+    "Monthly": "1mo",
+    "3-Month": "3mo"
 }
 
 # 2️⃣ STRAT pattern options
 available_patterns = ["1 (Inside)", "2U", "2D", "3 (Outside)"]
 
-# Select patterns for previous and current candle
+# Previous & Current candle pattern selection
 st.subheader("Select STRAT Candle Patterns to Filter")
 prev_patterns = st.multiselect(
     "Previous Candle Patterns",
@@ -78,7 +85,7 @@ if scan_button:
             try:
                 data = yf.download(
                     ticker,
-                    period="6mo",
+                    period="6mo",  # You may increase period for longer TF like 3-Month
                     interval=interval_map[timeframe],
                     progress=False
                 )
@@ -94,7 +101,7 @@ if scan_button:
                 prev_candle = strat_type(prev_prev, prev)
                 curr_candle = strat_type(prev, curr)
 
-                # Check filters: include only if candle patterns match
+                # Filter based on selected patterns
                 if ((not prev_patterns or prev_candle in prev_patterns) and
                     (not curr_patterns or curr_candle in curr_patterns)):
                     results.append({
@@ -116,3 +123,4 @@ if scan_button:
         st.dataframe(df, use_container_width=True)
     else:
         st.warning("No stocks found matching the selected pattern(s).")
+
