@@ -10,12 +10,14 @@ st.set_page_config(page_title="STRAT Scanner", layout="wide")
 SP500 = [
     "AAPL","MSFT","AMZN","NVDA","GOOGL","META","TSLA","BRK-B","JPM","JNJ",
     "V","PG","UNH","HD","MA","XOM","LLY","AVGO","PEP","COST",
+    # Add full list if needed
 ]
 
 # -----------------------------
 # STRAT CANDLE LOGIC
 # -----------------------------
 def strat_type(prev, curr):
+    # Ensure values are scalar
     prev_h = prev["High"].item() if hasattr(prev["High"], "item") else prev["High"]
     prev_l = prev["Low"].item() if hasattr(prev["Low"], "item") else prev["Low"]
     curr_h = curr["High"].item() if hasattr(curr["High"], "item") else curr["High"]
@@ -37,36 +39,32 @@ def strat_type(prev, curr):
 # -----------------------------
 st.title("📊 STRAT Candle Scanner (S&P 500)")
 
-# 1️⃣ Timeframe selection
-timeframe = st.selectbox(
-    "Select Timeframe",
-    ["Daily", "Weekly", "2-Week", "Monthly"]
-)
+# 1️⃣ Select timeframe
+timeframe = st.selectbox("Select Timeframe", ["Daily", "Weekly", "Monthly"])
 
-# Interval mapping for yfinance
 interval_map = {
     "Daily": "1d",
     "Weekly": "1wk",
-    "2-Week": "1wk",  # We'll combine 2 weekly candles manually
     "Monthly": "1mo"
 }
 
-# 2️⃣ STRAT patterns selection
+# 2️⃣ STRAT pattern options
 available_patterns = ["1 (Inside)", "2U", "2D", "3 (Outside)"]
 
-st.subheader("Filter by STRAT Candle Pattern")
+# Select patterns for previous and current candle
+st.subheader("Select STRAT Candle Patterns to Filter")
 prev_patterns = st.multiselect(
-    "Previous Candle",
+    "Previous Candle Patterns",
     options=available_patterns,
     default=available_patterns
 )
 curr_patterns = st.multiselect(
-    "Current Candle",
+    "Current Candle Patterns",
     options=available_patterns,
     default=available_patterns
 )
 
-# 3️⃣ Run Scanner
+# 3️⃣ Run button
 scan_button = st.button("Run Scanner")
 
 # -----------------------------
@@ -88,26 +86,6 @@ if scan_button:
                 if data.shape[0] < 3:
                     continue
 
-                # Handle 2-week timeframe by combining every 2 weekly candles
-                if timeframe == "2-Week":
-                    data_2w = []
-                    for i in range(0, len(data)-1, 2):
-                        # Combine 2 weeks
-                        slice_data = data.iloc[i:i+2]
-                        if slice_data.shape[0] < 2:
-                            continue
-                        combined = pd.Series({
-                            "Open": slice_data["Open"].iloc[0],
-                            "High": slice_data["High"].max(),
-                            "Low": slice_data["Low"].min(),
-                            "Close": slice_data["Close"].iloc[-1]
-                        })
-                        data_2w.append(combined)
-                    data = pd.DataFrame(data_2w)
-
-                if data.shape[0] < 3:
-                    continue
-
                 # Last 3 candles
                 prev_prev = data.iloc[-3]
                 prev = data.iloc[-2]
@@ -116,8 +94,9 @@ if scan_button:
                 prev_candle = strat_type(prev_prev, prev)
                 curr_candle = strat_type(prev, curr)
 
-                # Append only if both match selected filters
-                if prev_candle in prev_patterns and curr_candle in curr_patterns:
+                # Check filters: include only if candle patterns match
+                if ((not prev_patterns or prev_candle in prev_patterns) and
+                    (not curr_patterns or curr_candle in curr_patterns)):
                     results.append({
                         "Ticker": ticker,
                         "Previous Candle": prev_candle,
@@ -133,7 +112,7 @@ if scan_button:
     # Display results
     if results:
         df = pd.DataFrame(results)
-        st.success(f"Scan complete — {len(df)} stocks found matching selected STRAT pattern(s)")
+        st.success(f"Scan complete — {len(df)} stocks found matching selected patterns")
         st.dataframe(df, use_container_width=True)
     else:
-        st.warning("No stocks found matching the selected STRAT pattern(s).")
+        st.warning("No stocks found matching the selected pattern(s).")
