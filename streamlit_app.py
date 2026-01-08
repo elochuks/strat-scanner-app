@@ -1,116 +1,96 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import requests
 
 st.set_page_config(page_title="STRAT Scanner", layout="wide")
 
-# -----------------------------
-# Get S&P 500 tickers
-# -----------------------------
-@st.cache_data
-def get_sp500():
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    tables = pd.read_html(url)
-    return tables[0]["Symbol"].tolist()
+st.title("📊 STRAT Scanner (Daily)")
 
-# -----------------------------
-# Resample timeframe
-# -----------------------------
-def resample_data(df, timeframe):
-    if timeframe == "Weekly":
-        return df.resample("W").agg({
-            "Open": "first",
-            "High": "max",
-            "Low": "min",
-            "Close": "last",
-            "Volume": "sum"
-        }).dropna()
-    if timeframe == "Monthly":
-        return df.resample("M").agg({
-            "Open": "first",
-            "High": "max",
-            "Low": "min",
-            "Close": "last",
-            "Volume": "sum"
-        }).dropna()
-    return df  # Daily
-
-# -----------------------------
-# STRAT Candle Classification
-# -----------------------------
-def strat_type(prev, curr):
-    if curr["High"] < prev["High"] and curr["Low"] > prev["Low"]:
-        return "1"
-    if curr["High"] > prev["High"] and curr["Low"] < prev["Low"]:
-        return "3"
-    if curr["High"] > prev["High"]:
-        return "2u"
-    if curr["Low"] < prev["Low"]:
-        return "2d"
-    return None
-
-# -----------------------------
-# Streamlit UI
-# -----------------------------
-st.title("📊 STRAT Scanner – S&P 500")
-
-timeframe = st.selectbox("Select Timeframe", ["Daily", "Weekly", "Monthly"])
-patterns = st.multiselect(
-    "Select STRAT Candle Types",
-    ["1", "2u", "2d", "3"],
-    default=["1", "2u", "2d", "3"]
+# -------------------------
+# User Inputs
+# -------------------------
+tickers_input = st.text_area(
+    "Enter tickers (comma-separated)",
+    "AAPL,MSFT,NVDA,TSLA,SPY"
 )
 
-scan_btn = st.button("Run Scan")
+lookback = st.slider("Lookback days", 5, 60, 20)
 
-# -----------------------------
-# Scanner Execution
-# -----------------------------
-if scan_btn:
-    tickers = get_sp500()
-    results = []
+tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
-    progress = st.progress(0)
-    status = st.empty()
+# -------------------------
+# STRAT Candle Classification
+# -------------------------
+def classify_strat(df):
+    df = df.copy()
+    df["strat"] = ""
 
-    for i, ticker in enumerate(tickers):
-        try:
-            data = yf.download(ticker, period="6mo", interval="1d", progress=False)
+    for i in range(1, len(df)):
+        prev = df.iloc[i - 1]
+        curr = df.iloc[i]
 
-            if len(data) < 3:
-                continue
+        if curr.High <= prev.High and curr.Low >= prev.Low:
+            df.iloc[i, df.columns.get_loc("strat")] = "1"
+        elif curr.High > prev.High and curr.Low < prev.Low:
+            df.iloc[i, df.columns.get_loc("strat")] = "3"
+        elif curr.High > prev.High:
+            df.iloc[i, df.columns.get_loc("strat")] = "2U"
+        elif curr.Low < prev.Low:
+            df.iloc[i, df.columns.get_loc("strat")] = "2D"
 
-            data = resample_data(data, timeframe)
+    return df
 
-            if len(data) < 2:
-                continue
+# -------------------------
+# Scan Logic
+# -------------------------
+results = []
 
-            prev = data.iloc[-2]
-            curr = data.iloc[-1]
+if st.button("🔍 Run STRAT Scan"):
+    with st.spinner("Scanning..."):
+        for ticker in tickers:
+            try:
+                df = yf.download(ticker, period=f"{lookback}d", interval="1d")
+                if df.empty or len(df) < 3:
+                    continue
 
-            candle = strat_type(prev, curr)
+                df = classify_strat(df)
 
-            if candle in patterns:
-                results.append({
-                    "Ticker": ticker,
-                    "STRAT": candle,
-                    "High": round(curr["High"], 2),
-                    "Low": round(curr["Low"], 2),
-                    "Close": round(curr["Close"], 2)
-                })
+                last = df.iloc[-1]
+                prev = df.iloc[-2]
+                prev2 = df.iloc[-3]
 
-        except Exception:
-            pass
+                signal = None
 
-        progress.progress((i + 1) / len(tickers))
-        status.text(f"Scanning {ticker}")
+                # Inside Bar
+                if last.strat == "1":
+                    signal = "Inside Bar (1)"
 
-    progress.empty()
-    status.empty()
+                # 2-1-2 Bullish
+                elif prev2.strat == "2D" and prev.strat == "1" and last.strat == "2U":
+                    signal = "2-1-2 Bullish"
+
+                # 2-1-2 Bearish
+                elif prev2.strat == "2U" and prev.strat == "1" and last.strat == "2D":
+                    signal = "2-1-2 Bearish"
+
+                # Breakout
+                elif last.strat in ["2U", "2D"]:
+                    signal = f"Directional Break ({last.strat})"
+
+                if signal:
+                    results.append({
+                        "Ticker": ticker,
+                        "Signal": signal,
+                        "Last Close": round(last.Close, 2),
+                        "High": round(last.High, 2),
+                        "Low": round(last.Low, 2)
+                    })
+
+            except Exception as e:
+                st.warning(f"Error scanning {ticker}")
 
     if results:
-        st.success(f"Found {len(results)} matching stocks")
+        st.subheader("📈 Scan Results")
         st.dataframe(pd.DataFrame(results))
     else:
-        st.warning("No matches found")
+        st.info("No STRAT setups found.")
