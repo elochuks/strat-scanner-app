@@ -5,23 +5,32 @@ import pandas as pd
 st.set_page_config(page_title="STRAT Scanner", layout="wide")
 
 # -----------------------------
-# S&P 500 LIST (sample)
+# LOAD S&P 500 FROM CSV
 # -----------------------------
-SP500 = [
-    "AAPL","MSFT","AMZN","NVDA","GOOGL","META","TSLA","BRK-B","JPM","JNJ",
-    "V","PG","UNH","HD","MA","XOM","LLY","AVGO","PEP","COST",
-    # Add full list if needed
-]
+@st.cache_data
+def load_sp500():
+    url = "https://datahub.io/core/s-and-p-500-companies/r/constituents.csv"
+    df = pd.read_csv(url)
+
+    # Convert tickers for yfinance compatibility
+    tickers = (
+        df["Symbol"]
+        .str.replace(".", "-", regex=False)  # BRK.B -> BRK-B
+        .unique()
+        .tolist()
+    )
+    return tickers
+
+SP500 = load_sp500()
 
 # -----------------------------
 # STRAT CANDLE LOGIC
 # -----------------------------
 def strat_type(prev, curr):
-    # Ensure values are scalar
-    prev_h = prev["High"].item() if hasattr(prev["High"], "item") else prev["High"]
-    prev_l = prev["Low"].item() if hasattr(prev["Low"], "item") else prev["Low"]
-    curr_h = curr["High"].item() if hasattr(curr["High"], "item") else curr["High"]
-    curr_l = curr["Low"].item() if hasattr(curr["Low"], "item") else curr["Low"]
+    prev_h = prev["High"].item()
+    prev_l = prev["Low"].item()
+    curr_h = curr["High"].item()
+    curr_l = curr["Low"].item()
 
     if curr_h < prev_h and curr_l > prev_l:
         return "1 (Inside)"
@@ -37,9 +46,9 @@ def strat_type(prev, curr):
 # -----------------------------
 # UI
 # -----------------------------
-st.title("📊 STRAT Candle Scanner (S&P 500)")
+st.title("📊 STRAT Candle Scanner — S&P 500")
 
-# 1️⃣ Select timeframe
+# Timeframe selection
 timeframe = st.selectbox(
     "Select Timeframe",
     ["4-Hour", "2-Day", "Daily", "2-Week", "Weekly", "Monthly", "3-Month"]
@@ -55,23 +64,23 @@ interval_map = {
     "3-Month": "3mo"
 }
 
-# 2️⃣ STRAT pattern options
+# STRAT pattern options
 available_patterns = ["1 (Inside)", "2U", "2D", "3 (Outside)"]
 
-# Previous & Current candle pattern selection
-st.subheader("Select STRAT Candle Patterns to Filter")
+st.subheader("STRAT Pattern Filters")
+
 prev_patterns = st.multiselect(
     "Previous Candle Patterns",
     options=available_patterns,
     default=available_patterns
 )
+
 curr_patterns = st.multiselect(
     "Current Candle Patterns",
     options=available_patterns,
     default=available_patterns
 )
 
-# 3️⃣ Run button
 scan_button = st.button("Run Scanner")
 
 # -----------------------------
@@ -85,15 +94,15 @@ if scan_button:
             try:
                 data = yf.download(
                     ticker,
-                    period="6mo",  # You may increase period for longer TF like 3-Month
+                    period="12mo",
                     interval=interval_map[timeframe],
-                    progress=False
+                    progress=False,
+                    auto_adjust=False
                 )
 
-                if data.shape[0] < 3:
+                if data.empty or len(data) < 3:
                     continue
 
-                # Last 3 candles
                 prev_prev = data.iloc[-3]
                 prev = data.iloc[-2]
                 curr = data.iloc[-1]
@@ -101,7 +110,6 @@ if scan_button:
                 prev_candle = strat_type(prev_prev, prev)
                 curr_candle = strat_type(prev, curr)
 
-                # Filter based on selected patterns
                 if ((not prev_patterns or prev_candle in prev_patterns) and
                     (not curr_patterns or curr_candle in curr_patterns)):
                     results.append({
@@ -109,17 +117,15 @@ if scan_button:
                         "Previous Candle": prev_candle,
                         "Current Candle": curr_candle,
                         "Direction": "Up" if curr["Close"].item() > curr["Open"].item() else "Down",
-                        "Close Price": round(curr["Close"].item(), 2)
+                        "Close": round(curr["Close"].item(), 2)
                     })
 
-            except Exception as e:
-                st.write(f"Error downloading {ticker}: {e}")
+            except Exception:
                 continue
 
-    # Display results
     if results:
         df = pd.DataFrame(results)
-        st.success(f"Scan complete — {len(df)} stocks found matching selected patterns")
+        st.success(f"Found {len(df)} stocks matching criteria")
         st.dataframe(df, use_container_width=True)
     else:
-        st.warning("No stocks found matching the selected pattern(s).")
+        st.warning("No stocks matched the selected STRAT criteria.")
