@@ -12,7 +12,7 @@ def load_tickers():
     tickers = set()
 
     # -----------------------------
-    # S&P 500 (stable source)
+    # S&P 500 (stable & live)
     # -----------------------------
     try:
         sp500_url = (
@@ -25,30 +25,45 @@ def load_tickers():
         st.warning(f"S&P 500 load failed: {e}")
 
     # -----------------------------
-    # ETFs (stable dataset repo)
+    # ETFs (curated, stable list)
     # -----------------------------
-    try:
-        etf_url = (
-            "https://raw.githubusercontent.com/"
-            "datasets/etf-list/master/data/etfs.csv"
-        )
-        etf_df = pd.read_csv(etf_url)
-        tickers.update(etf_df["Symbol"].dropna().tolist())
-    except Exception as e:
-        st.warning(f"ETF load failed: {e}")
+    etfs = [
+        # Index ETFs
+        "SPY", "IVV", "VOO", "QQQ", "DIA", "IWM",
+
+        # Sector ETFs
+        "XLF", "XLK", "XLE", "XLY", "XLP", "XLV",
+        "XLI", "XLB", "XLRE", "XLU", "XLC",
+
+        # Growth / Value
+        "VUG", "VTV", "IWF", "IWD",
+
+        # Bonds
+        "TLT", "IEF", "SHY", "LQD", "HYG",
+
+        # Commodities
+        "GLD", "SLV", "USO", "UNG",
+
+        # Volatility / Inverse
+        "VXX", "SQQQ", "TQQQ"
+    ]
+    tickers.update(etfs)
 
     # -----------------------------
-    # Indexes (hardcoded = safest)
+    # Indexes (Yahoo symbols)
     # -----------------------------
     indexes = [
         "^GSPC",  # S&P 500
         "^NDX",   # Nasdaq 100
         "^DJI",   # Dow Jones
         "^RUT",   # Russell 2000
-        "^VIX",   # Volatility
+        "^VIX",   # Volatility Index
     ]
     tickers.update(indexes)
 
+    # -----------------------------
+    # Final cleanup
+    # -----------------------------
     tickers = sorted(tickers)
 
     if not tickers:
