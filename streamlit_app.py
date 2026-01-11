@@ -1,26 +1,26 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from yahoo_fin import stock_info as si
-
-st.set_page_config(page_title="STRAT Scanner – Full S&P 500", layout="wide")
-st.title("📊 STRAT Scanner – Full S&P 500 Scan")
 
 # -----------------------------------
-# Get S&P 500 Tick List Automatically
+# App Config
+# -----------------------------------
+st.set_page_config(page_title="STRAT Scanner", layout="wide")
+st.title("📊 STRAT Scanner – Full S&P 500")
+
+# -----------------------------------
+# Load S&P 500 Tickers (Wikipedia)
 # -----------------------------------
 @st.cache_data
 def get_sp500_tickers():
-    try:
-        tickers = si.tickers_sp500()
-        return tickers
-    except Exception as e:
-        st.error(f"Failed to fetch S&P 500 list: {e}")
-        return []
+    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+    table = pd.read_html(url)[0]
+    tickers = table["Symbol"].tolist()
+    tickers = [t.replace(".", "-") for t in tickers]  # Yahoo format
+    return tickers
 
 sp500_tickers = get_sp500_tickers()
-
-st.write(f"Total S&P 500 tickers loaded: {len(sp500_tickers)}")
+st.caption(f"Loaded {len(sp500_tickers)} S&P 500 tickers")
 
 # -----------------------------------
 # Timeframe Selector
@@ -34,7 +34,7 @@ TIMEFRAME_MAP = {
 timeframe = st.selectbox("Select Timeframe", list(TIMEFRAME_MAP.keys()))
 
 # -----------------------------------
-# STRAT Classification
+# STRAT Candle Classification
 # -----------------------------------
 def strat_type(curr, prev):
     if curr["High"] < prev["High"] and curr["Low"] > prev["Low"]:
@@ -45,59 +45,78 @@ def strat_type(curr, prev):
         return "2D"
     elif curr["High"] > prev["High"] and curr["Low"] < prev["Low"]:
         return "3"
-    else:
-        return None
+    return None
 
 # -----------------------------------
-# Scanner Logic
+# Run Scanner
 # -----------------------------------
 if st.button("🚀 Run Scanner"):
-    results = {"Bullish": {}, "Bearish": {}}
-    interval, period = TIMEFRAME_MAP[timeframe]
+    results = {
+        "Bullish": {},
+        "Bearish": {}
+    }
 
-    with st.spinner("Scanning S&P 500…"):
-        for ticker in sp500_tickers:
+    interval, period = TIMEFRAME_MAP[timeframe]
+    progress = st.progress(0)
+
+    with st.spinner("Scanning S&P 500..."):
+        for i, ticker in enumerate(sp500_tickers):
             try:
-                df = yf.download(ticker, interval=interval, period=period, progress=False)
-                if df.shape[0] < 3:
+                df = yf.download(
+                    ticker,
+                    interval=interval,
+                    period=period,
+                    progress=False
+                )
+
+                if len(df) < 3:
                     continue
 
                 prev = df.iloc[-3]
                 curr = df.iloc[-2]
-                nextc = df.iloc[-1]
+                last = df.iloc[-1]
 
                 prev_type = strat_type(curr, prev)
-                curr_type = strat_type(nextc, curr)
+                curr_type = strat_type(last, curr)
+
+                if not prev_type or not curr_type:
+                    continue
+
                 combo = f"{prev_type} → {curr_type}"
 
                 if combo in ["1 → 2U", "2D → 2U", "3 → 2U"]:
                     results["Bullish"].setdefault(combo, []).append(ticker)
+
                 elif combo in ["1 → 2D", "2U → 2D", "3 → 2D"]:
                     results["Bearish"].setdefault(combo, []).append(ticker)
 
-            except Exception as e:
-                st.warning(f"{ticker} error: {e}")
+            except Exception:
+                pass
+
+            progress.progress((i + 1) / len(sp500_tickers))
+
+    progress.empty()
+    st.success("Scan Complete")
 
     # -----------------------------------
-    # Displaying Results
+    # Display Results
     # -----------------------------------
-    st.success("Scan Complete!")
-
     col1, col2 = st.columns(2)
+
     with col1:
-        st.subheader("🟢 Bullish STRAT Results")
+        st.subheader("🟢 Bullish STRAT Combos")
         if results["Bullish"]:
-            for combo, tkrs in results["Bullish"].items():
+            for combo, tickers in results["Bullish"].items():
                 st.markdown(f"**{combo}**")
-                st.write(", ".join(tkrs))
+                st.write(", ".join(tickers))
         else:
             st.write("No bullish setups found.")
 
     with col2:
-        st.subheader("🔴 Bearish STRAT Results")
+        st.subheader("🔴 Bearish STRAT Combos")
         if results["Bearish"]:
-            for combo, tkrs in results["Bearish"].items():
+            for combo, tickers in results["Bearish"].items():
                 st.markdown(f"**{combo}**")
-                st.write(", ".join(tkrs))
+                st.write(", ".join(tickers))
         else:
             st.write("No bearish setups found.")
