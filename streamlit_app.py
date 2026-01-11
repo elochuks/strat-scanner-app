@@ -5,69 +5,72 @@ import pandas as pd
 st.set_page_config(page_title="STRAT Scanner", layout="wide")
 
 # -----------------------------
-# LOAD S&P 500 FROM CSV
+# S&P 500 LIST (sample)
 # -----------------------------
-@st.cache_data
-def load_sp500():
-    url = "https://datahub.io/core/s-and-p-500-companies/r/constituents.csv"
-    df = pd.read_csv(url)
-
-    # Convert tickers for yfinance compatibility
-    tickers = (
-        df["Symbol"]
-        .str.replace(".", "-", regex=False)  # BRK.B -> BRK-B
-        .unique()
-        .tolist()
-    )
-    return tickers
-
-SP500 = load_sp500()
+SP500 = [
+    "AAPL","MSFT","AMZN","NVDA","GOOGL","META","TSLA","BRK-B","JPM","JNJ",
+    "V","PG","UNH","HD","MA","XOM","LLY","AVGO","PEP","COST",
+]
 
 # -----------------------------
 # STRAT CANDLE LOGIC
 # -----------------------------
+def candle_color(candle):
+    return "Green" if candle["Close"].item() > candle["Open"].item() else "Red"
+
 def strat_type(prev, curr):
     prev_h = prev["High"].item()
     prev_l = prev["Low"].item()
     curr_h = curr["High"].item()
     curr_l = curr["Low"].item()
 
+    color = candle_color(curr)
+
+    # Inside bar
     if curr_h < prev_h and curr_l > prev_l:
         return "1 (Inside)"
-    elif curr_h > prev_h and curr_l < prev_l:
+
+    # Outside bar
+    if curr_h > prev_h and curr_l < prev_l:
         return "3 (Outside)"
-    elif curr_h > prev_h:
-        return "2U"
-    elif curr_l < prev_l:
-        return "2D"
-    else:
-        return "Undefined"
+
+    # Directional
+    if curr_h > prev_h:
+        return f"2U {color}"
+
+    if curr_l < prev_l:
+        return f"2D {color}"
+
+    return "Undefined"
 
 # -----------------------------
 # UI
 # -----------------------------
-st.title("📊 STRAT Candle Scanner — S&P 500")
+st.title("📊 STRAT Candle Scanner (S&P 500)")
 
 # Timeframe selection
 timeframe = st.selectbox(
     "Select Timeframe",
-    ["4-Hour", "2-Day", "Daily", "2-Week", "Weekly", "Monthly", "3-Month"]
+    ["2-Day", "Daily", "2-Week", "Weekly", "Monthly"]
 )
 
 interval_map = {
-    "4-Hour": "4h",
     "2-Day": "2d",
     "Daily": "1d",
     "2-Week": "2wk",
     "Weekly": "1wk",
-    "Monthly": "1mo",
-    "3-Month": "3mo"
+    "Monthly": "1mo"
 }
 
 # STRAT pattern options
-available_patterns = ["1 (Inside)", "2U", "2D", "3 (Outside)"]
+available_patterns = [
+    "1 (Inside)",
+    "2U Green", "2U Red",
+    "2D Green", "2D Red",
+    "3 (Outside)"
+]
 
-st.subheader("STRAT Pattern Filters")
+st.subheader("Select STRAT Candle Patterns")
 
 prev_patterns = st.multiselect(
     "Previous Candle Patterns",
@@ -94,13 +97,12 @@ if scan_button:
             try:
                 data = yf.download(
                     ticker,
-                    period="12mo",
+                    period="6mo",
                     interval=interval_map[timeframe],
-                    progress=False,
-                    auto_adjust=False
+                    progress=False
                 )
 
-                if data.empty or len(data) < 3:
+                if data.shape[0] < 3:
                     continue
 
                 prev_prev = data.iloc[-3]
@@ -116,16 +118,17 @@ if scan_button:
                         "Ticker": ticker,
                         "Previous Candle": prev_candle,
                         "Current Candle": curr_candle,
-                        "Direction": "Up" if curr["Close"].item() > curr["Open"].item() else "Down",
-                        "Close": round(curr["Close"].item(), 2)
+                        "Candle Color": candle_color(curr),
+                        "Close Price": round(curr["Close"].item(), 2)
                     })
 
-            except Exception:
+            except Exception as e:
+                st.write(f"Error downloading {ticker}: {e}")
                 continue
 
     if results:
         df = pd.DataFrame(results)
-        st.success(f"Found {len(df)} stocks matching criteria")
+        st.success(f"Scan complete — {len(df)} stocks found")
         st.dataframe(df, use_container_width=True)
     else:
-        st.warning("No stocks matched the selected STRAT criteria.")
+        st.warning("No stocks matched the selected STRAT patterns.")
