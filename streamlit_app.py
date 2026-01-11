@@ -53,11 +53,11 @@ def load_tickers():
     # Indexes (Yahoo symbols)
     # -----------------------------
     indexes = [
-        "^GSPC",  # S&P 500
-        "^NDX",   # Nasdaq 100
-        "^DJI",   # Dow Jones
-        "^RUT",   # Russell 2000
-        "^VIX",   # Volatility Index
+        "^gGSPC",  # S&P 500
+        "NDX",   # Nasdaq 100
+        "DJI",   # Dow Jones
+        "RUT",   # Russell 2000
+        "VIX",   # Volatility Index
     ]
     tickers.update(indexes)
 
