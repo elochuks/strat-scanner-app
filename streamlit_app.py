@@ -4,40 +4,69 @@ import pandas as pd
 
 st.set_page_config(page_title="STRAT Scanner", layout="wide")
 
-# -----------------------------
-# LOAD TICKERS FROM CSV SOURCES
-# -----------------------------
-@st.cache_data(ttl=86400)  # cache for 24 hours
+# =====================================================
+# LOAD TICKERS (HARDENED & CLOUD-SAFE)
+# =====================================================
+@st.cache_data(ttl=86400)
 def load_tickers():
-    # S&P 500
-    sp500_url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
-    sp500_df = pd.read_csv(sp500_url)
-    sp500 = sp500_df["Symbol"].tolist()
+    tickers = set()
 
-    # ETFs
-    etf_url = "https://raw.githubusercontent.com/ranaroussi/yfinance/master/tests/data/etfs.csv"
-    etf_df = pd.read_csv(etf_url)
-    etfs = etf_df["Ticker"].tolist()
+    # -----------------------------
+    # S&P 500 (stable source)
+    # -----------------------------
+    try:
+        sp500_url = (
+            "https://raw.githubusercontent.com/"
+            "datasets/s-and-p-500-companies/master/data/constituents.csv"
+        )
+        sp500_df = pd.read_csv(sp500_url)
+        tickers.update(sp500_df["Symbol"].dropna().tolist())
+    except Exception as e:
+        st.warning(f"S&P 500 load failed: {e}")
 
-    # Indexes
-    index_url = "https://raw.githubusercontent.com/ranaroussi/yfinance/master/tests/data/indexes.csv"
-    index_df = pd.read_csv(index_url)
-    indexes = index_df["Ticker"].tolist()
+    # -----------------------------
+    # ETFs (stable dataset repo)
+    # -----------------------------
+    try:
+        etf_url = (
+            "https://raw.githubusercontent.com/"
+            "datasets/etf-list/master/data/etfs.csv"
+        )
+        etf_df = pd.read_csv(etf_url)
+        tickers.update(etf_df["Symbol"].dropna().tolist())
+    except Exception as e:
+        st.warning(f"ETF load failed: {e}")
 
-    # Merge & clean
-    tickers = sorted(set(sp500 + etfs + indexes))
+    # -----------------------------
+    # Indexes (hardcoded = safest)
+    # -----------------------------
+    indexes = [
+        "^GSPC",  # S&P 500
+        "^NDX",   # Nasdaq 100
+        "^DJI",   # Dow Jones
+        "^RUT",   # Russell 2000
+        "^VIX",   # Volatility
+    ]
+    tickers.update(indexes)
+
+    tickers = sorted(tickers)
+
+    if not tickers:
+        raise RuntimeError("No tickers loaded")
+
     return tickers
+
 
 TICKERS = load_tickers()
 
-# -----------------------------
+# =====================================================
 # STRAT CANDLE LOGIC
-# -----------------------------
+# =====================================================
 def strat_type(prev, curr):
-    prev_h = prev["High"].item()
-    prev_l = prev["Low"].item()
-    curr_h = curr["High"].item()
-    curr_l = curr["Low"].item()
+    prev_h = float(prev["High"])
+    prev_l = float(prev["Low"])
+    curr_h = float(curr["High"])
+    curr_l = float(curr["Low"])
 
     if curr_h < prev_h and curr_l > prev_l:
         return "1 (Inside)"
@@ -50,17 +79,17 @@ def strat_type(prev, curr):
     else:
         return "Undefined"
 
-# -----------------------------
+
+# =====================================================
 # UI
-# -----------------------------
-st.title("📊 STRAT Scanner (Stocks, ETFs & Indexes)")
+# =====================================================
+st.title("📊 STRAT Scanner")
+st.caption(f"Scanning **{len(TICKERS)}** tickers (S&P 500 + ETFs + Indexes)")
 
-st.caption(f"Scanning **{len(TICKERS)} tickers** (S&P 500 + ETFs + Indexes)")
-
-# Timeframe selection
+# Timeframes
 timeframe = st.selectbox(
     "Select Timeframe",
-    ["4-Hour", "2-Day", "Daily", "2-Week", "Weekly", "Monthly", "3-Month"]
+    ["4-Hour", "2-Day", "Daily", "2-Week", "Weekly", "Monthly", "3-Month"],
 )
 
 interval_map = {
@@ -70,10 +99,10 @@ interval_map = {
     "2-Week": "2wk",
     "Weekly": "1wk",
     "Monthly": "1mo",
-    "3-Month": "3mo"
+    "3-Month": "3mo",
 }
 
-# STRAT pattern filters
+# STRAT patterns
 available_patterns = ["1 (Inside)", "2U", "2D", "3 (Outside)"]
 
 st.subheader("STRAT Pattern Filters")
@@ -81,20 +110,20 @@ st.subheader("STRAT Pattern Filters")
 prev_patterns = st.multiselect(
     "Previous Candle Patterns",
     options=available_patterns,
-    default=available_patterns
+    default=available_patterns,
 )
 
 curr_patterns = st.multiselect(
     "Current Candle Patterns",
     options=available_patterns,
-    default=available_patterns
+    default=available_patterns,
 )
 
 scan_button = st.button("Run Scanner")
 
-# -----------------------------
+# =====================================================
 # SCANNER
-# -----------------------------
+# =====================================================
 if scan_button:
     results = []
 
@@ -105,10 +134,11 @@ if scan_button:
                     ticker,
                     period="9mo",
                     interval=interval_map[timeframe],
-                    progress=False
+                    progress=False,
+                    auto_adjust=False,
                 )
 
-                if data.shape[0] < 3:
+                if data.empty or len(data) < 3:
                     continue
 
                 prev_prev = data.iloc[-3]
@@ -118,15 +148,21 @@ if scan_button:
                 prev_candle = strat_type(prev_prev, prev)
                 curr_candle = strat_type(prev, curr)
 
-                if ((not prev_patterns or prev_candle in prev_patterns) and
-                    (not curr_patterns or curr_candle in curr_patterns)):
-                    results.append({
-                        "Ticker": ticker,
-                        "Previous Candle": prev_candle,
-                        "Current Candle": curr_candle,
-                        "Direction": "Up" if curr["Close"].item() > curr["Open"].item() else "Down",
-                        "Close Price": round(curr["Close"].item(), 2)
-                    })
+                if (
+                    (not prev_patterns or prev_candle in prev_patterns)
+                    and (not curr_patterns or curr_candle in curr_patterns)
+                ):
+                    results.append(
+                        {
+                            "Ticker": ticker,
+                            "Previous Candle": prev_candle,
+                            "Current Candle": curr_candle,
+                            "Direction": "Up"
+                            if float(curr["Close"]) > float(curr["Open"])
+                            else "Down",
+                            "Close Price": round(float(curr["Close"]), 2),
+                        }
+                    )
 
             except Exception:
                 continue
