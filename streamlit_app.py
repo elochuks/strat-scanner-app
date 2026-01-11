@@ -1,6 +1,8 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import requests
+from io import StringIO
 
 # -----------------------------------
 # App Config
@@ -9,18 +11,39 @@ st.set_page_config(page_title="STRAT Scanner", layout="wide")
 st.title("📊 STRAT Scanner – Full S&P 500")
 
 # -----------------------------------
-# Load S&P 500 Tickers (Wikipedia)
+# SAFE S&P 500 LOADER (NO 403)
 # -----------------------------------
 @st.cache_data
 def get_sp500_tickers():
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    table = pd.read_html(url)[0]
-    tickers = table["Symbol"].tolist()
-    tickers = [t.replace(".", "-") for t in tickers]  # Yahoo format
-    return tickers
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+
+        tables = pd.read_html(StringIO(response.text))
+        df = tables[0]
+
+        tickers = df["Symbol"].tolist()
+        tickers = [t.replace(".", "-") for t in tickers]
+        return tickers
+
+    except Exception:
+        # 🔒 HARD FAIL-SAFE (never breaks app)
+        st.warning("Live S&P 500 fetch blocked — using fallback list.")
+        return [
+            "AAPL","MSFT","AMZN","NVDA","GOOGL","META","BRK-B","TSLA","JPM","JNJ",
+            "V","PG","UNH","HD","MA","XOM","LLY","AVGO","COST","PEP",
+            "ABBV","KO","MRK","WMT","BAC","NFLX","ADBE","CRM","ORCL","CSCO",
+            "CVX","ACN","MCD","AMD","QCOM","INTC","IBM","GE","CAT","HON",
+            "SPGI","INTU","AMAT","BKNG","TMO","ISRG","GS","MS","RTX","DE"
+        ]
 
 sp500_tickers = get_sp500_tickers()
-st.caption(f"Loaded {len(sp500_tickers)} S&P 500 tickers")
+st.caption(f"Loaded {len(sp500_tickers)} tickers")
 
 # -----------------------------------
 # Timeframe Selector
@@ -34,7 +57,7 @@ TIMEFRAME_MAP = {
 timeframe = st.selectbox("Select Timeframe", list(TIMEFRAME_MAP.keys()))
 
 # -----------------------------------
-# STRAT Candle Classification
+# STRAT Candle Logic
 # -----------------------------------
 def strat_type(curr, prev):
     if curr["High"] < prev["High"] and curr["Low"] > prev["Low"]:
@@ -51,22 +74,21 @@ def strat_type(curr, prev):
 # Run Scanner
 # -----------------------------------
 if st.button("🚀 Run Scanner"):
-    results = {
-        "Bullish": {},
-        "Bearish": {}
-    }
 
+    results = {"Bullish": {}, "Bearish": {}}
     interval, period = TIMEFRAME_MAP[timeframe]
+
     progress = st.progress(0)
 
-    with st.spinner("Scanning S&P 500..."):
+    with st.spinner("Scanning markets..."):
         for i, ticker in enumerate(sp500_tickers):
             try:
                 df = yf.download(
                     ticker,
                     interval=interval,
                     period=period,
-                    progress=False
+                    progress=False,
+                    threads=False
                 )
 
                 if len(df) < 3:
@@ -99,7 +121,7 @@ if st.button("🚀 Run Scanner"):
     st.success("Scan Complete")
 
     # -----------------------------------
-    # Display Results
+    # Results Display
     # -----------------------------------
     col1, col2 = st.columns(2)
 
