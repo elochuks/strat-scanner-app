@@ -1,126 +1,190 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import requests
-from io import StringIO
 
 st.set_page_config(page_title="STRAT Scanner", layout="wide")
-st.title("📊 STRAT Scanner – Full S&P 500")
 
-# -----------------------------------
-# SAFE S&P 500 LOADER
-# -----------------------------------
-@st.cache_data
-def get_sp500_tickers():
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    headers = {"User-Agent": "Mozilla/5.0"}
+# =====================================================
+# LOAD TICKERS (HARDENED & CLOUD-SAFE)
+# =====================================================
+@st.cache_data(ttl=86400)
+def load_tickers():
+    tickers = set()
 
+    # -----------------------------
+    # S&P 500 (stable & live)
+    # -----------------------------
     try:
-        r = requests.get(url, headers=headers, timeout=10)
-        r.raise_for_status()
-        df = pd.read_html(StringIO(r.text))[0]
-        return [t.replace(".", "-") for t in df["Symbol"]]
-    except Exception:
-        return ["AAPL","MSFT","AMZN","NVDA","META","GOOGL","TSLA","JPM","JNJ","XOM"]
+        sp500_url = (
+            "https://raw.githubusercontent.com/"
+            "datasets/s-and-p-500-companies/master/data/constituents.csv"
+        )
+        sp500_df = pd.read_csv(sp500_url)
+        tickers.update(sp500_df["Symbol"].dropna().tolist())
+    except Exception as e:
+        st.warning(f"S&P 500 load failed: {e}")
 
-tickers = get_sp500_tickers()
-st.caption(f"Loaded {len(tickers)} tickers")
+    # -----------------------------
+    # ETFs (curated, stable list)
+    # -----------------------------
+    etfs = [
+        # Index ETFs
+        "SPY", "IVV", "VOO", "QQQ", "DIA", "IWM",
 
-# -----------------------------------
-# Timeframe
-# -----------------------------------
-TIMEFRAME_MAP = {
-    "Daily": ("1d", "6mo"),
-    "Weekly": ("1wk", "3y"),
-    "Monthly": ("1mo", "15y"),
+        # Sector ETFs
+        "XLF", "XLK", "XLE", "XLY", "XLP", "XLV",
+        "XLI", "XLB", "XLRE", "XLU", "XLC",
+
+        # Growth / Value
+        "VUG", "VTV", "IWF", "IWD",
+
+        # Bonds
+        "TLT", "IEF", "SHY", "LQD", "HYG",
+
+        # Commodities
+        "GLD", "SLV", "USO", "UNG",
+
+        # Volatility / Inverse
+        "VXX", "SQQQ", "TQQQ"
+    ]
+    tickers.update(etfs)
+
+    # -----------------------------
+    # Indexes (Yahoo symbols)
+    # -----------------------------
+    indexes = [
+        "^GSPC",  # S&P 500
+        "^NDX",   # Nasdaq 100
+        "^DJI",   # Dow Jones
+        "^RUT",   # Russell 2000
+        "^VIX",   # Volatility Index
+    ]
+    tickers.update(indexes)
+
+    # -----------------------------
+    # Final cleanup
+    # -----------------------------
+    tickers = sorted(tickers)
+
+    if not tickers:
+        raise RuntimeError("No tickers loaded")
+
+    return tickers
+
+
+TICKERS = load_tickers()
+
+# =====================================================
+# STRAT CANDLE LOGIC
+# =====================================================
+def strat_type(prev, curr):
+    prev_h = float(prev["High"])
+    prev_l = float(prev["Low"])
+    curr_h = float(curr["High"])
+    curr_l = float(curr["Low"])
+
+    if curr_h < prev_h and curr_l > prev_l:
+        return "1 (Inside)"
+    elif curr_h > prev_h and curr_l < prev_l:
+        return "3 (Outside)"
+    elif curr_h > prev_h:
+        return "2U"
+    elif curr_l < prev_l:
+        return "2D"
+    else:
+        return "Undefined"
+
+
+# =====================================================
+# UI
+# =====================================================
+st.title("📊 STRAT Scanner")
+st.caption(f"Scanning **{len(TICKERS)}** tickers (S&P 500 + ETFs + Indexes)")
+
+# Timeframes
+timeframe = st.selectbox(
+    "Select Timeframe",
+    ["4-Hour", "2-Day", "Daily", "2-Week", "Weekly", "Monthly", "3-Month"],
+)
+
+interval_map = {
+    "4-Hour": "4h",
+    "2-Day": "2d",
+    "Daily": "1d",
+    "2-Week": "2wk",
+    "Weekly": "1wk",
+    "Monthly": "1mo",
+    "3-Month": "3mo",
 }
 
-timeframe = st.selectbox("Select Timeframe", TIMEFRAME_MAP.keys())
+# STRAT patterns
+available_patterns = ["1 (Inside)", "2U", "2D", "3 (Outside)"]
 
-# -----------------------------------
-# STRAT LOGIC (RELAXED + CORRECT)
-# -----------------------------------
-def strat_type(curr, prev):
-    if curr.High <= prev.High and curr.Low >= prev.Low:
-        return "1"
-    if curr.High > prev.High and curr.Low >= prev.Low:
-        return "2U"
-    if curr.Low < prev.Low and curr.High <= prev.High:
-        return "2D"
-    if curr.High > prev.High and curr.Low < prev.Low:
-        return "3"
-    return None
+st.subheader("STRAT Pattern Filters")
 
-# -----------------------------------
-# SCAN
-# -----------------------------------
-if st.button("🚀 Run Scanner"):
+prev_patterns = st.multiselect(
+    "Previous Candle Patterns",
+    options=available_patterns,
+    default=available_patterns,
+)
 
-    bullish = {}
-    bearish = {}
+curr_patterns = st.multiselect(
+    "Current Candle Patterns",
+    options=available_patterns,
+    default=available_patterns,
+)
 
-    interval, period = TIMEFRAME_MAP[timeframe]
-    progress = st.progress(0)
+scan_button = st.button("Run Scanner")
 
-    for i, ticker in enumerate(tickers):
-        try:
-            df = yf.download(
-                ticker,
-                interval=interval,
-                period=period,
-                progress=False,
-                auto_adjust=True
-            )
+# =====================================================
+# SCANNER
+# =====================================================
+if scan_button:
+    results = []
 
-            # 🚨 IMPORTANT: REMOVE LIVE CANDLE
-            df = df.iloc[:-1]
+    with st.spinner("Scanning market..."):
+        for ticker in TICKERS:
+            try:
+                data = yf.download(
+                    ticker,
+                    period="9mo",
+                    interval=interval_map[timeframe],
+                    progress=False,
+                    auto_adjust=False,
+                )
 
-            if len(df) < 3:
+                if data.empty or len(data) < 3:
+                    continue
+
+                prev_prev = data.iloc[-3]
+                prev = data.iloc[-2]
+                curr = data.iloc[-1]
+
+                prev_candle = strat_type(prev_prev, prev)
+                curr_candle = strat_type(prev, curr)
+
+                if (
+                    (not prev_patterns or prev_candle in prev_patterns)
+                    and (not curr_patterns or curr_candle in curr_patterns)
+                ):
+                    results.append(
+                        {
+                            "Ticker": ticker,
+                            "Previous Candle": prev_candle,
+                            "Current Candle": curr_candle,
+                            "Direction": "Up"
+                            if float(curr["Close"]) > float(curr["Open"])
+                            else "Down",
+                            "Close Price": round(float(curr["Close"]), 2),
+                        }
+                    )
+
+            except Exception:
                 continue
 
-            c1 = df.iloc[-3]  # candle before setup
-            c2 = df.iloc[-2]  # setup candle
-            c3 = df.iloc[-1]  # trigger candle
-
-            t1 = strat_type(c2, c1)
-            t2 = strat_type(c3, c2)
-
-            if not t1 or not t2:
-                continue
-
-            combo = f"{t1} → {t2}"
-
-            if t2 == "2U":
-                bullish.setdefault(combo, []).append(ticker)
-            elif t2 == "2D":
-                bearish.setdefault(combo, []).append(ticker)
-
-        except Exception:
-            pass
-
-        progress.progress((i + 1) / len(tickers))
-
-    progress.empty()
-
-    # -----------------------------------
-    # DISPLAY
-    # -----------------------------------
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("🟢 Bullish STRAT Combos")
-        if bullish:
-            for combo, names in bullish.items():
-                st.markdown(f"**{combo}**")
-                st.write(", ".join(names))
-        else:
-            st.write("No bullish setups found.")
-
-    with col2:
-        st.subheader("🔴 Bearish STRAT Combos")
-        if bearish:
-            for combo, names in bearish.items():
-                st.markdown(f"**{combo}**")
-                st.write(", ".join(names))
-        else:
-            st.write("No bearish setups found.")
+    if results:
+        df = pd.DataFrame(results)
+        st.success(f"Found {len(df)} matching tickers")
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("No tickers matched the selected STRAT criteria.")
