@@ -12,7 +12,7 @@ def load_tickers():
     tickers = set()
 
     # -----------------------------
-    # S&P 500 (stable & live)
+    # S&P 500
     # -----------------------------
     try:
         sp500_url = (
@@ -25,7 +25,7 @@ def load_tickers():
         st.warning(f"S&P 500 load failed: {e}")
 
     # -----------------------------
-    # ETFs (curated, stable list)
+    # ETFs
     # -----------------------------
     etfs = [
         "SPY", "IVV", "VOO", "QQQ", "DIA", "IWM",
@@ -41,7 +41,9 @@ def load_tickers():
     # -----------------------------
     # Indexes
     # -----------------------------
-    indexes = ["^GSPC", "^NDX", "^DJI", "^RUT", "^VIX"]
+    indexes = [
+        "^GSPC", "^NDX", "^DJI", "^RUT", "^VIX"
+    ]
     tickers.update(indexes)
 
     tickers = sorted(tickers)
@@ -80,29 +82,38 @@ def strat_type(prev, curr):
 
 
 # =====================================================
-# FTFC LOGIC (MONTHLY + WEEKLY)
+# FTFC (Full Time Frame Continuity)
 # =====================================================
-def get_ftfc_status(ticker):
+def get_ftfc(ticker):
     try:
-        monthly = yf.download(
-            ticker, period="18mo", interval="1mo", progress=False
-        )
         weekly = yf.download(
-            ticker, period="18mo", interval="1wk", progress=False
+            ticker,
+            period="3mo",
+            interval="1wk",
+            progress=False,
+            auto_adjust=False,
         )
 
-        if monthly.empty or weekly.empty:
+        monthly = yf.download(
+            ticker,
+            period="1y",
+            interval="1mo",
+            progress=False,
+            auto_adjust=False,
+        )
+
+        if weekly.empty or monthly.empty:
             return "Mixed"
 
-        m = monthly.iloc[-1]
         w = weekly.iloc[-1]
+        m = monthly.iloc[-1]
 
-        m_color = "Green" if m["Close"] > m["Open"] else "Red"
-        w_color = "Green" if w["Close"] > w["Open"] else "Red"
+        weekly_color = "Green" if w["Close"] > w["Open"] else "Red"
+        monthly_color = "Green" if m["Close"] > m["Open"] else "Red"
 
-        if m_color == "Green" and w_color == "Green":
+        if weekly_color == "Green" and monthly_color == "Green":
             return "Bullish FTFC"
-        elif m_color == "Red" and w_color == "Red":
+        elif weekly_color == "Red" and monthly_color == "Red":
             return "Bearish FTFC"
         else:
             return "Mixed"
@@ -155,7 +166,7 @@ curr_patterns = st.multiselect(
 scan_button = st.button("Run Scanner")
 
 # =====================================================
-# SCANNER (UNCHANGED LOGIC)
+# SCANNER
 # =====================================================
 if scan_button:
     results = []
@@ -190,11 +201,11 @@ if scan_button:
                             "Ticker": ticker,
                             "Previous Candle": prev_candle,
                             "Current Candle": curr_candle,
-                            "FTFC": get_ftfc_status(ticker),
                             "Direction": "Up"
                             if float(curr["Close"]) > float(curr["Open"])
                             else "Down",
                             "Close Price": round(float(curr["Close"]), 2),
+                            "FTFC": get_ftfc(ticker),
                         }
                     )
 
