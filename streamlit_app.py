@@ -75,22 +75,28 @@ def load_tickers():
 TICKERS = load_tickers()
 
 # =====================================================
-# STRAT CANDLE LOGIC
+# STRAT CANDLE LOGIC WITH COLOR
 # =====================================================
 def strat_type(prev, curr):
     prev_h = float(prev["High"])
     prev_l = float(prev["Low"])
     curr_h = float(curr["High"])
     curr_l = float(curr["Low"])
+    curr_o = float(curr["Open"])
+    curr_c = float(curr["Close"])
 
+    # Determine candle color
+    candle_color = "Green" if curr_c > curr_o else "Red"
+
+    # STRAT logic
     if curr_h < prev_h and curr_l > prev_l:
         return "1 (Inside)"
     elif curr_h > prev_h and curr_l < prev_l:
         return "3 (Outside)"
     elif curr_h > prev_h:
-        return "2U"
+        return f"2U {candle_color}"  # 2U Red / 2U Green
     elif curr_l < prev_l:
-        return "2D"
+        return f"2D {candle_color}"  # 2D Red / 2D Green
     else:
         return "Undefined"
 
@@ -117,8 +123,12 @@ interval_map = {
     "3-Month": "3mo",
 }
 
-# STRAT patterns
-available_patterns = ["1 (Inside)", "2U", "2D", "3 (Outside)"]
+# STRAT patterns with color options
+available_patterns = [
+    "1 (Inside)", "3 (Outside)",
+    "2U Red", "2U Green",
+    "2D Red", "2D Green"
+]
 
 st.subheader("STRAT Pattern Filters")
 
