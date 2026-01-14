@@ -11,6 +11,9 @@ st.set_page_config(page_title="STRAT Scanner", layout="wide")
 def load_tickers():
     tickers = set()
 
+    # -----------------------------
+    # S&P 500 (stable & live)
+    # -----------------------------
     try:
         sp500_url = (
             "https://raw.githubusercontent.com/"
@@ -21,6 +24,9 @@ def load_tickers():
     except Exception as e:
         st.warning(f"S&P 500 load failed: {e}")
 
+    # -----------------------------
+    # ETFs (curated, stable list)
+    # -----------------------------
     etfs = [
         "SPY", "IVV", "VOO", "QQQ", "DIA", "IWM",
         "XLF", "XLK", "XLE", "XLY", "XLP", "XLV",
@@ -32,10 +38,18 @@ def load_tickers():
     ]
     tickers.update(etfs)
 
+    # -----------------------------
+    # Indexes
+    # -----------------------------
     indexes = ["^GSPC", "^NDX", "^DJI", "^RUT", "^VIX"]
     tickers.update(indexes)
 
-    return sorted(tickers)
+    tickers = sorted(tickers)
+
+    if not tickers:
+        raise RuntimeError("No tickers loaded")
+
+    return tickers
 
 
 TICKERS = load_tickers()
@@ -44,44 +58,55 @@ TICKERS = load_tickers()
 # STRAT CANDLE LOGIC
 # =====================================================
 def strat_type(prev, curr):
-    candle_color = "Green" if curr["Close"] > curr["Open"] else "Red"
+    prev_h = float(prev["High"])
+    prev_l = float(prev["Low"])
+    curr_h = float(curr["High"])
+    curr_l = float(curr["Low"])
+    curr_o = float(curr["Open"])
+    curr_c = float(curr["Close"])
 
-    if curr["High"] < prev["High"] and curr["Low"] > prev["Low"]:
+    candle_color = "Green" if curr_c > curr_o else "Red"
+
+    if curr_h < prev_h and curr_l > prev_l:
         return "1 (Inside)"
-    elif curr["High"] > prev["High"] and curr["Low"] < prev["Low"]:
+    elif curr_h > prev_h and curr_l < prev_l:
         return "3 (Outside)"
-    elif curr["High"] > prev["High"]:
+    elif curr_h > prev_h:
         return f"2U {candle_color}"
-    elif curr["Low"] < prev["Low"]:
+    elif curr_l < prev_l:
         return f"2D {candle_color}"
     else:
         return "Undefined"
 
 
 # =====================================================
-# FTFC CONTINUITY LOGIC
+# FTFC LOGIC (MONTHLY + WEEKLY)
 # =====================================================
-def candle_color(df):
-    if df.empty or len(df) < 1:
-        return None
-    last = df.iloc[-1]
-    return "Green" if last["Close"] > last["Open"] else "Red"
-
-
-def ftfc_status(ticker):
+def get_ftfc_status(ticker):
     try:
-        weekly = yf.download(ticker, period="1y", interval="1wk", progress=False)
-        monthly = yf.download(ticker, period="2y", interval="1mo", progress=False)
+        monthly = yf.download(
+            ticker, period="18mo", interval="1mo", progress=False
+        )
+        weekly = yf.download(
+            ticker, period="18mo", interval="1wk", progress=False
+        )
 
-        wk_color = candle_color(weekly)
-        mo_color = candle_color(monthly)
+        if monthly.empty or weekly.empty:
+            return "Mixed"
 
-        if wk_color == "Green" and mo_color == "Green":
+        m = monthly.iloc[-1]
+        w = weekly.iloc[-1]
+
+        m_color = "Green" if m["Close"] > m["Open"] else "Red"
+        w_color = "Green" if w["Close"] > w["Open"] else "Red"
+
+        if m_color == "Green" and w_color == "Green":
             return "Bullish FTFC"
-        elif wk_color == "Red" and mo_color == "Red":
+        elif m_color == "Red" and w_color == "Red":
             return "Bearish FTFC"
         else:
             return "Mixed"
+
     except Exception:
         return "Mixed"
 
@@ -90,7 +115,7 @@ def ftfc_status(ticker):
 # UI
 # =====================================================
 st.title("📊 STRAT Scanner")
-st.caption(f"Scanning **{len(TICKERS)}** tickers")
+st.caption(f"Scanning **{len(TICKERS)}** tickers (S&P 500 + ETFs + Indexes)")
 
 timeframe = st.selectbox(
     "Select Timeframe",
@@ -113,6 +138,8 @@ available_patterns = [
     "2D Red", "2D Green"
 ]
 
+st.subheader("STRAT Pattern Filters")
+
 prev_patterns = st.multiselect(
     "Previous Candle Patterns",
     options=available_patterns,
@@ -128,7 +155,7 @@ curr_patterns = st.multiselect(
 scan_button = st.button("Run Scanner")
 
 # =====================================================
-# SCANNER
+# SCANNER (UNCHANGED LOGIC)
 # =====================================================
 if scan_button:
     results = []
@@ -141,6 +168,7 @@ if scan_button:
                     period="9mo",
                     interval=interval_map[timeframe],
                     progress=False,
+                    auto_adjust=False,
                 )
 
                 if data.empty or len(data) < 3:
@@ -154,17 +182,21 @@ if scan_button:
                 curr_candle = strat_type(prev, curr)
 
                 if (
-                    prev_candle in prev_patterns
-                    and curr_candle in curr_patterns
+                    (not prev_patterns or prev_candle in prev_patterns)
+                    and (not curr_patterns or curr_candle in curr_patterns)
                 ):
-                    results.append({
-                        "Ticker": ticker,
-                        "Previous Candle": prev_candle,
-                        "Current Candle": curr_candle,
-                        "FTFC": ftfc_status(ticker),
-                        "Direction": "Up" if curr["Close"] > curr["Open"] else "Down",
-                        "Close Price": round(float(curr["Close"]), 2),
-                    })
+                    results.append(
+                        {
+                            "Ticker": ticker,
+                            "Previous Candle": prev_candle,
+                            "Current Candle": curr_candle,
+                            "FTFC": get_ftfc_status(ticker),
+                            "Direction": "Up"
+                            if float(curr["Close"]) > float(curr["Open"])
+                            else "Down",
+                            "Close Price": round(float(curr["Close"]), 2),
+                        }
+                    )
 
             except Exception:
                 continue
