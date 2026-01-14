@@ -147,7 +147,7 @@ curr_patterns = st.multiselect(
 scan_button = st.button("Run Scanner")
 
 # =====================================================
-# SCANNER
+# SCANNER WITH TIMEFRAME CONTINUITY (OPTIMIZED)
 # =====================================================
 if scan_button:
     results = []
@@ -155,6 +155,9 @@ if scan_button:
     with st.spinner("Scanning market..."):
         for ticker in TICKERS:
             try:
+                # -----------------------------
+                # Download main timeframe data
+                # -----------------------------
                 data = yf.download(
                     ticker,
                     period="9mo",
@@ -162,7 +165,6 @@ if scan_button:
                     progress=False,
                     auto_adjust=False,
                 )
-
                 if data.empty or len(data) < 3:
                     continue
 
@@ -173,6 +175,44 @@ if scan_button:
                 prev_candle = strat_type(prev_prev, prev)
                 curr_candle = strat_type(prev, curr)
 
+                # -----------------------------
+                # Download Weekly and Monthly once per ticker
+                # -----------------------------
+                weekly_data = yf.download(
+                    ticker, period="12mo", interval="1wk", progress=False, auto_adjust=False
+                )
+                monthly_data = yf.download(
+                    ticker, period="36mo", interval="1mo", progress=False, auto_adjust=False
+                )
+
+                # -----------------------------
+                # Timeframe Continuity (FTFC)
+                # -----------------------------
+                ftfc_label = ""
+                
+                # Weekly check
+                if not weekly_data.empty:
+                    last_week = weekly_data.iloc[-1]
+                    if last_week["Close"] > last_week["Open"]:
+                        ftfc_label += "Bullish FTFC: Weekly"
+                    elif last_week["Close"] < last_week["Open"]:
+                        ftfc_label += "Bearish FTFC: Weekly"
+
+                # Monthly check
+                if not monthly_data.empty:
+                    last_month = monthly_data.iloc[-1]
+                    if last_month["Close"] > last_month["Open"]:
+                        if ftfc_label:
+                            ftfc_label += ", "
+                        ftfc_label += "Bullish FTFC: Monthly"
+                    elif last_month["Close"] < last_month["Open"]:
+                        if ftfc_label:
+                            ftfc_label += ", "
+                        ftfc_label += "Bearish FTFC: Monthly"
+
+                # -----------------------------
+                # Apply STRAT pattern filters
+                # -----------------------------
                 if (
                     (not prev_patterns or prev_candle in prev_patterns)
                     and (not curr_patterns or curr_candle in curr_patterns)
@@ -186,12 +226,16 @@ if scan_button:
                             if float(curr["Close"]) > float(curr["Open"])
                             else "Down",
                             "Close Price": round(float(curr["Close"]), 2),
+                            "Timeframe Continuity": ftfc_label,
                         }
                     )
 
             except Exception:
                 continue
 
+    # =====================================================
+    # Display Results
+    # =====================================================
     if results:
         df = pd.DataFrame(results)
         st.success(f"Found {len(df)} matching tickers")
