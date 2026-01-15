@@ -6,7 +6,6 @@ st.set_page_config(page_title="STRAT Scanner", layout="wide")
 
 # =====================================================
 # LOAD TICKERS (HARDENED & CLOUD-SAFE)
-# LOAD TICKERS
 # =====================================================
 @st.cache_data(ttl=86400)
 def load_tickers():
@@ -24,8 +23,6 @@ def load_tickers():
         tickers.update(sp500_df["Symbol"].dropna().tolist())
     except Exception as e:
         st.warning(f"S&P 500 load failed: {e}")
-    except Exception:
-        pass
 
     # -----------------------------
     # ETFs (curated, stable list)
@@ -49,13 +46,6 @@ def load_tickers():
 
         # Volatility / Inverse
         "VXX", "SQQQ", "TQQQ"
-        "SPY","IVV","VOO","QQQ","DIA","IWM",
-        "XLF","XLK","XLE","XLY","XLP","XLV",
-        "XLI","XLB","XLRE","XLU","XLC",
-        "VUG","VTV","IWF","IWD",
-        "TLT","IEF","SHY","LQD","HYG",
-        "GLD","SLV","USO","UNG",
-        "VXX","SQQQ","TQQQ"
     ]
     tickers.update(etfs)
 
@@ -69,7 +59,6 @@ def load_tickers():
         "^RUT",   # Russell 2000
         "^VIX",   # Volatility Index
     ]
-    indexes = ["^GSPC", "^NDX", "^DJI", "^RUT", "^VIX"]
     tickers.update(indexes)
 
     # -----------------------------
@@ -81,14 +70,12 @@ def load_tickers():
         raise RuntimeError("No tickers loaded")
 
     return tickers
-    return sorted(tickers)
 
 
 TICKERS = load_tickers()
 
 # =====================================================
 # STRAT CANDLE LOGIC WITH COLOR
-# STRAT CANDLE LOGIC
 # =====================================================
 def strat_type(prev, curr):
     prev_h = float(prev["High"])
@@ -103,12 +90,8 @@ def strat_type(prev, curr):
 
     # STRAT logic
     if curr_h < prev_h and curr_l > prev_l:
-    candle_color = "Green" if curr["Close"] > curr["Open"] else "Red"
-
-    if curr["High"] < prev["High"] and curr["Low"] > prev["Low"]:
         return "1 (Inside)"
     elif curr_h > prev_h and curr_l < prev_l:
-    if curr["High"] > prev["High"] and curr["Low"] < prev["Low"]:
         return "3 (Outside)"
     elif curr_h > prev_h:
         return f"2U {candle_color}"  # 2U Red / 2U Green
@@ -116,11 +99,6 @@ def strat_type(prev, curr):
         return f"2D {candle_color}"  # 2D Red / 2D Green
     else:
         return "Undefined"
-    if curr["High"] > prev["High"]:
-        return f"2U {candle_color}"
-    if curr["Low"] < prev["Low"]:
-        return f"2D {candle_color}"
-    return "Undefined"
 
 
 # =====================================================
@@ -128,13 +106,11 @@ def strat_type(prev, curr):
 # =====================================================
 st.title("📊 STRAT Scanner")
 st.caption(f"Scanning **{len(TICKERS)}** tickers (S&P 500 + ETFs + Indexes)")
-st.caption(f"Scanning **{len(TICKERS)}** tickers")
 
 # Timeframes
 timeframe = st.selectbox(
     "Select Timeframe",
     ["4-Hour", "2-Day", "Daily", "2-Week", "Weekly", "Monthly", "3-Month"],
-    ["4-Hour", "2-Day", "Daily", "2-Week", "Weekly", "Monthly", "3-Month"]
 )
 
 interval_map = {
@@ -153,7 +129,6 @@ available_patterns = [
     "2U Red", "2U Green",
     "2D Red", "2D Green"
 ]
-patterns = ["1 (Inside)", "3 (Outside)", "2U Red", "2U Green", "2D Red", "2D Green"]
 
 st.subheader("STRAT Pattern Filters")
 
@@ -161,22 +136,12 @@ prev_patterns = st.multiselect(
     "Previous Candle Patterns",
     options=available_patterns,
     default=available_patterns,
-    "Previous Candle Patterns", patterns, patterns
 )
 
 curr_patterns = st.multiselect(
     "Current Candle Patterns",
     options=available_patterns,
     default=available_patterns,
-    "Current Candle Patterns", patterns, patterns
-)
-
-st.subheader("FTFC Filters")
-
-ftfc_alignment_only = st.checkbox(
-    "Show only M + W aligned (FTFC)",
-    value=False,
-    help="Only show tickers where Monthly and Weekly continuity agree"
 )
 
 scan_button = st.button("Run Scanner")
@@ -191,9 +156,6 @@ if scan_button:
         for ticker in TICKERS:
             try:
                 # Download main interval data
-                # -----------------------
-                # STRAT TIMEFRAME DATA
-                # -----------------------
                 data = yf.download(
                     ticker,
                     period="9mo",
@@ -257,53 +219,6 @@ if scan_button:
                             "FTFC": ftfc_str,  # New column
                         }
                     )
-                if prev_candle not in prev_patterns or curr_candle not in curr_patterns:
-                    continue
-
-                current_close = float(curr["Close"])
-
-                # -----------------------
-                # FTFC (MONTHLY + WEEKLY)
-                # -----------------------
-                ftfc = []
-                ftfc_states = {}
-
-                weekly = yf.download(
-                    ticker, period="6mo", interval="1wk", progress=False
-                )
-                if not weekly.empty:
-                    w_open = weekly.iloc[-1]["Open"]
-                    ftfc_states["W"] = "Bullish" if current_close > w_open else "Bearish"
-                    ftfc.append(f"W: {ftfc_states['W']}")
-
-                monthly = yf.download(
-                    ticker, period="12mo", interval="1mo", progress=False
-                )
-                if not monthly.empty:
-                    m_open = monthly.iloc[-1]["Open"]
-                    ftfc_states["M"] = "Bullish" if current_close > m_open else "Bearish"
-                    ftfc.append(f"M: {ftfc_states['M']}")
-
-                # -----------------------
-                # FTFC ALIGNMENT FILTER
-                # -----------------------
-                if ftfc_alignment_only:
-                    if len(ftfc_states) < 2:
-                        continue
-                    if ftfc_states["M"] != ftfc_states["W"]:
-                        continue
-
-                # -----------------------
-                # RESULTS
-                # -----------------------
-                results.append({
-                    "Ticker": ticker,
-                    "Previous Candle": prev_candle,
-                    "Current Candle": curr_candle,
-                    "Direction": "Up" if curr["Close"] > curr["Open"] else "Down",
-                    "Close Price": round(current_close, 2),
-                    "FTFC": ", ".join(ftfc),
-                })
 
             except Exception:
                 continue
