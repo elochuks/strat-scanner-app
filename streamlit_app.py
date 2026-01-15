@@ -44,7 +44,12 @@ def load_tickers():
     indexes = ["^GSPC", "^NDX", "^DJI", "^RUT", "^VIX"]
     tickers.update(indexes)
 
-    return sorted(tickers)
+    tickers = sorted(tickers)
+
+    if not tickers:
+        raise RuntimeError("No tickers loaded")
+
+    return tickers
 
 
 TICKERS = load_tickers()
@@ -67,54 +72,40 @@ def strat_type(prev, curr):
         return "Undefined"
 
 # =====================================================
-# FTFC LOGIC (NON-INTRUSIVE)
+# FTFC (FULL TIME FRAME CONTINUITY)
 # =====================================================
-@st.cache_data(ttl=3600)
-def get_ftfc(ticker):
+def ftfc_status(ticker):
     try:
-        timeframes = {
-            "Monthly": "1mo",
-            "Weekly": "1wk",
-            "Daily": "1d",
-            "Hourly": "1h",
-        }
+        daily = yf.download(ticker, period="10d", interval="1d", progress=False)
+        weekly = yf.download(ticker, period="3mo", interval="1wk", progress=False)
+        monthly = yf.download(ticker, period="1y", interval="1mo", progress=False)
 
-        opens = []
+        if daily.empty or weekly.empty or monthly.empty:
+            return "N/A"
 
-        for interval in timeframes.values():
-            df = yf.download(
-                ticker,
-                period="3mo",
-                interval=interval,
-                progress=False,
-                auto_adjust=False,
-            )
+        current_price = float(daily.iloc[-1]["Close"])
+        daily_open = float(daily.iloc[-1]["Open"])
+        weekly_open = float(weekly.iloc[-1]["Open"])
+        monthly_open = float(monthly.iloc[-1]["Open"])
 
-            if df.empty:
-                return "Mixed"
-
-            opens.append(float(df.iloc[-1]["Open"]))
-
-        # Use daily close as current price
-        current_price = float(
-            yf.download(
-                ticker,
-                period="5d",
-                interval="1d",
-                progress=False,
-                auto_adjust=False,
-            ).iloc[-1]["Close"]
-        )
-
-        if all(current_price > o for o in opens):
+        if (
+            current_price > daily_open
+            and current_price > weekly_open
+            and current_price > monthly_open
+        ):
             return "FTFC Up"
-        elif all(current_price < o for o in opens):
+
+        if (
+            current_price < daily_open
+            and current_price < weekly_open
+            and current_price < monthly_open
+        ):
             return "FTFC Down"
-        else:
-            return "Mixed"
+
+        return "Mixed"
 
     except Exception:
-        return "Mixed"
+        return "N/A"
 
 # =====================================================
 # UI
@@ -147,13 +138,13 @@ st.subheader("STRAT Pattern Filters")
 
 prev_patterns = st.multiselect(
     "Previous Candle Patterns",
-    available_patterns,
+    options=available_patterns,
     default=available_patterns,
 )
 
 curr_patterns = st.multiselect(
     "Current Candle Patterns",
-    available_patterns,
+    options=available_patterns,
     default=available_patterns,
 )
 
@@ -173,7 +164,6 @@ if scan_button:
                     period="9mo",
                     interval=interval_map[timeframe],
                     progress=False,
-                    auto_adjust=False,
                 )
 
                 if data.empty or len(data) < 3:
@@ -195,10 +185,10 @@ if scan_button:
                             "Ticker": ticker,
                             "Previous Candle": prev_candle,
                             "Current Candle": curr_candle,
-                            "FTFC": get_ftfc(ticker),
                             "Direction": "Up"
                             if curr["Close"] > curr["Open"]
                             else "Down",
+                            "FTFC": ftfc_status(ticker),
                             "Close Price": round(float(curr["Close"]), 2),
                         }
                     )
