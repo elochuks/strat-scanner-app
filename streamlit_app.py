@@ -41,17 +41,10 @@ def load_tickers():
     # -----------------------------
     # Indexes
     # -----------------------------
-    indexes = [
-        "^GSPC", "^NDX", "^DJI", "^RUT", "^VIX"
-    ]
+    indexes = ["^GSPC", "^NDX", "^DJI", "^RUT", "^VIX"]
     tickers.update(indexes)
 
-    tickers = sorted(tickers)
-
-    if not tickers:
-        raise RuntimeError("No tickers loaded")
-
-    return tickers
+    return sorted(tickers)
 
 
 TICKERS = load_tickers()
@@ -60,73 +53,74 @@ TICKERS = load_tickers()
 # STRAT CANDLE LOGIC
 # =====================================================
 def strat_type(prev, curr):
-    prev_h = float(prev["High"])
-    prev_l = float(prev["Low"])
-    curr_h = float(curr["High"])
-    curr_l = float(curr["Low"])
-    curr_o = float(curr["Open"])
-    curr_c = float(curr["Close"])
+    candle_color = "Green" if curr["Close"] > curr["Open"] else "Red"
 
-    candle_color = "Green" if curr_c > curr_o else "Red"
-
-    if curr_h < prev_h and curr_l > prev_l:
+    if curr["High"] < prev["High"] and curr["Low"] > prev["Low"]:
         return "1 (Inside)"
-    elif curr_h > prev_h and curr_l < prev_l:
+    elif curr["High"] > prev["High"] and curr["Low"] < prev["Low"]:
         return "3 (Outside)"
-    elif curr_h > prev_h:
+    elif curr["High"] > prev["High"]:
         return f"2U {candle_color}"
-    elif curr_l < prev_l:
+    elif curr["Low"] < prev["Low"]:
         return f"2D {candle_color}"
     else:
         return "Undefined"
 
-
 # =====================================================
-# FTFC (Full Time Frame Continuity)
+# FTFC LOGIC (NON-INTRUSIVE)
 # =====================================================
+@st.cache_data(ttl=3600)
 def get_ftfc(ticker):
     try:
-        weekly = yf.download(
-            ticker,
-            period="3mo",
-            interval="1wk",
-            progress=False,
-            auto_adjust=False,
+        timeframes = {
+            "Monthly": "1mo",
+            "Weekly": "1wk",
+            "Daily": "1d",
+            "Hourly": "1h",
+        }
+
+        opens = []
+
+        for interval in timeframes.values():
+            df = yf.download(
+                ticker,
+                period="3mo",
+                interval=interval,
+                progress=False,
+                auto_adjust=False,
+            )
+
+            if df.empty:
+                return "Mixed"
+
+            opens.append(float(df.iloc[-1]["Open"]))
+
+        # Use daily close as current price
+        current_price = float(
+            yf.download(
+                ticker,
+                period="5d",
+                interval="1d",
+                progress=False,
+                auto_adjust=False,
+            ).iloc[-1]["Close"]
         )
 
-        monthly = yf.download(
-            ticker,
-            period="1y",
-            interval="1mo",
-            progress=False,
-            auto_adjust=False,
-        )
-
-        if weekly.empty or monthly.empty:
-            return "Mixed"
-
-        w = weekly.iloc[-1]
-        m = monthly.iloc[-1]
-
-        weekly_color = "Green" if w["Close"] > w["Open"] else "Red"
-        monthly_color = "Green" if m["Close"] > m["Open"] else "Red"
-
-        if weekly_color == "Green" and monthly_color == "Green":
-            return "Bullish FTFC"
-        elif weekly_color == "Red" and monthly_color == "Red":
-            return "Bearish FTFC"
+        if all(current_price > o for o in opens):
+            return "FTFC Up"
+        elif all(current_price < o for o in opens):
+            return "FTFC Down"
         else:
             return "Mixed"
 
     except Exception:
         return "Mixed"
 
-
 # =====================================================
 # UI
 # =====================================================
 st.title("📊 STRAT Scanner")
-st.caption(f"Scanning **{len(TICKERS)}** tickers (S&P 500 + ETFs + Indexes)")
+st.caption(f"Scanning **{len(TICKERS)}** tickers")
 
 timeframe = st.selectbox(
     "Select Timeframe",
@@ -153,13 +147,13 @@ st.subheader("STRAT Pattern Filters")
 
 prev_patterns = st.multiselect(
     "Previous Candle Patterns",
-    options=available_patterns,
+    available_patterns,
     default=available_patterns,
 )
 
 curr_patterns = st.multiselect(
     "Current Candle Patterns",
-    options=available_patterns,
+    available_patterns,
     default=available_patterns,
 )
 
@@ -201,11 +195,11 @@ if scan_button:
                             "Ticker": ticker,
                             "Previous Candle": prev_candle,
                             "Current Candle": curr_candle,
+                            "FTFC": get_ftfc(ticker),
                             "Direction": "Up"
-                            if float(curr["Close"]) > float(curr["Open"])
+                            if curr["Close"] > curr["Open"]
                             else "Down",
                             "Close Price": round(float(curr["Close"]), 2),
-                            "FTFC": get_ftfc(ticker),
                         }
                     )
 
