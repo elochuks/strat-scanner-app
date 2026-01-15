@@ -41,7 +41,7 @@ def load_tickers():
 TICKERS = load_tickers()
 
 # =====================================================
-# STRAT LOGIC
+# STRAT CANDLE LOGIC
 # =====================================================
 def strat_type(prev, curr):
     candle_color = "Green" if curr["Close"] > curr["Open"] else "Red"
@@ -80,8 +80,22 @@ interval_map = {
 
 patterns = ["1 (Inside)", "3 (Outside)", "2U Red", "2U Green", "2D Red", "2D Green"]
 
-prev_patterns = st.multiselect("Previous Candle Patterns", patterns, patterns)
-curr_patterns = st.multiselect("Current Candle Patterns", patterns, patterns)
+st.subheader("STRAT Pattern Filters")
+
+prev_patterns = st.multiselect(
+    "Previous Candle Patterns", patterns, patterns
+)
+curr_patterns = st.multiselect(
+    "Current Candle Patterns", patterns, patterns
+)
+
+st.subheader("FTFC Filters")
+
+ftfc_alignment_only = st.checkbox(
+    "Show only M + W aligned (FTFC)",
+    value=False,
+    help="Only show tickers where Monthly and Weekly continuity agree"
+)
 
 scan_button = st.button("Run Scanner")
 
@@ -95,7 +109,7 @@ if scan_button:
         for ticker in TICKERS:
             try:
                 # -----------------------
-                # Main timeframe (STRAT)
+                # STRAT TIMEFRAME DATA
                 # -----------------------
                 data = yf.download(
                     ticker,
@@ -120,26 +134,38 @@ if scan_button:
                 current_close = float(curr["Close"])
 
                 # -----------------------
-                # FTFC (optimized)
+                # FTFC (MONTHLY + WEEKLY)
                 # -----------------------
                 ftfc = []
+                ftfc_states = {}
 
                 weekly = yf.download(
                     ticker, period="6mo", interval="1wk", progress=False
                 )
                 if not weekly.empty:
                     w_open = weekly.iloc[-1]["Open"]
-                    ftfc.append("W: Bullish" if current_close > w_open else "W: Bearish")
+                    ftfc_states["W"] = "Bullish" if current_close > w_open else "Bearish"
+                    ftfc.append(f"W: {ftfc_states['W']}")
 
                 monthly = yf.download(
                     ticker, period="12mo", interval="1mo", progress=False
                 )
                 if not monthly.empty:
                     m_open = monthly.iloc[-1]["Open"]
-                    ftfc.append("M: Bullish" if current_close > m_open else "M: Bearish")
+                    ftfc_states["M"] = "Bullish" if current_close > m_open else "Bearish"
+                    ftfc.append(f"M: {ftfc_states['M']}")
 
                 # -----------------------
-                # Results
+                # FTFC ALIGNMENT FILTER
+                # -----------------------
+                if ftfc_alignment_only:
+                    if len(ftfc_states) < 2:
+                        continue
+                    if ftfc_states["M"] != ftfc_states["W"]:
+                        continue
+
+                # -----------------------
+                # RESULTS
                 # -----------------------
                 results.append({
                     "Ticker": ticker,
