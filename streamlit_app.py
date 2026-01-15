@@ -11,9 +11,7 @@ st.set_page_config(page_title="STRAT Scanner", layout="wide")
 def load_tickers():
     tickers = set()
 
-    # -----------------------------
     # S&P 500
-    # -----------------------------
     try:
         sp500_url = (
             "https://raw.githubusercontent.com/"
@@ -24,9 +22,7 @@ def load_tickers():
     except Exception as e:
         st.warning(f"S&P 500 load failed: {e}")
 
-    # -----------------------------
     # ETFs
-    # -----------------------------
     etfs = [
         "SPY", "IVV", "VOO", "QQQ", "DIA", "IWM",
         "XLF", "XLK", "XLE", "XLY", "XLP", "XLV",
@@ -38,9 +34,7 @@ def load_tickers():
     ]
     tickers.update(etfs)
 
-    # -----------------------------
     # Indexes
-    # -----------------------------
     indexes = ["^GSPC", "^NDX", "^DJI", "^RUT", "^VIX"]
     tickers.update(indexes)
 
@@ -72,40 +66,31 @@ def strat_type(prev, curr):
         return "Undefined"
 
 # =====================================================
-# FTFC (FULL TIME FRAME CONTINUITY)
+# FTFC (FULL TIME FRAME CONTINUITY) - Efficient Version
 # =====================================================
-def ftfc_status(ticker):
+@st.cache_data(ttl=86400)
+def get_ftfc_opens(ticker):
+    """Download weekly/monthly opens once per ticker for FTFC"""
     try:
-        daily = yf.download(ticker, period="10d", interval="1d", progress=False)
         weekly = yf.download(ticker, period="3mo", interval="1wk", progress=False)
         monthly = yf.download(ticker, period="1y", interval="1mo", progress=False)
-
-        if daily.empty or weekly.empty or monthly.empty:
-            return "N/A"
-
-        current_price = float(daily.iloc[-1]["Close"])
-        daily_open = float(daily.iloc[-1]["Open"])
-        weekly_open = float(weekly.iloc[-1]["Open"])
-        monthly_open = float(monthly.iloc[-1]["Open"])
-
-        if (
-            current_price > daily_open
-            and current_price > weekly_open
-            and current_price > monthly_open
-        ):
-            return "FTFC Up"
-
-        if (
-            current_price < daily_open
-            and current_price < weekly_open
-            and current_price < monthly_open
-        ):
-            return "FTFC Down"
-
-        return "Mixed"
-
+        if weekly.empty or monthly.empty:
+            return None
+        return {
+            "weekly_open": float(weekly.iloc[-1]["Open"]),
+            "monthly_open": float(monthly.iloc[-1]["Open"]),
+        }
     except Exception:
-        return "N/A"
+        return None
+
+
+def ftfc_status_fast(curr_close, daily_open, weekly_open, monthly_open):
+    if curr_close > daily_open and curr_close > weekly_open and curr_close > monthly_open:
+        return "FTFC Up"
+    elif curr_close < daily_open and curr_close < weekly_open and curr_close < monthly_open:
+        return "FTFC Down"
+    else:
+        return "Mixed"
 
 # =====================================================
 # UI
@@ -180,15 +165,25 @@ if scan_button:
                     (not prev_patterns or prev_candle in prev_patterns)
                     and (not curr_patterns or curr_candle in curr_patterns)
                 ):
+                    # --- FTFC ---
+                    ftfc_opens = get_ftfc_opens(ticker)
+                    if ftfc_opens:
+                        ftfc = ftfc_status_fast(
+                            curr_close=float(curr["Close"]),
+                            daily_open=float(curr["Open"]),
+                            weekly_open=ftfc_opens["weekly_open"],
+                            monthly_open=ftfc_opens["monthly_open"],
+                        )
+                    else:
+                        ftfc = "N/A"
+
                     results.append(
                         {
                             "Ticker": ticker,
                             "Previous Candle": prev_candle,
                             "Current Candle": curr_candle,
-                            "Direction": "Up"
-                            if curr["Close"] > curr["Open"]
-                            else "Down",
-                            "FTFC": ftfc_status(ticker),
+                            "Direction": "Up" if curr["Close"] > curr["Open"] else "Down",
+                            "FTFC": ftfc,
                             "Close Price": round(float(curr["Close"]), 2),
                         }
                     )
