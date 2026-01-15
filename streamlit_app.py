@@ -41,7 +41,7 @@ def load_tickers():
 TICKERS = load_tickers()
 
 # =====================================================
-# STRAT CANDLE LOGIC
+# STRAT LOGIC
 # =====================================================
 def strat_type(prev, curr):
     candle_color = "Green" if curr["Close"] > curr["Open"] else "Red"
@@ -56,6 +56,20 @@ def strat_type(prev, curr):
         return f"2D {candle_color}"
     return "Undefined"
 
+# =====================================================
+# BATCH DOWNLOAD FUNCTION (THREAD-SAFE)
+# =====================================================
+@st.cache_data(ttl=3600)
+def batch_download(tickers, period, interval):
+    """Download data for multiple tickers at once (threads=False)."""
+    return yf.download(
+        tickers=tickers,
+        period=period,
+        interval=interval,
+        group_by="ticker",
+        threads=False,
+        progress=False
+    )
 
 # =====================================================
 # UI
@@ -70,9 +84,9 @@ timeframe = st.selectbox(
 
 interval_map = {
     "4-Hour": "4h",
-    "2-Day": "2d",
+    "2-Day": "1d",       # Safe interval
     "Daily": "1d",
-    "2-Week": "2wk",
+    "2-Week": "1wk",     # Safe interval
     "Weekly": "1wk",
     "Monthly": "1mo",
     "3-Month": "3mo",
@@ -80,22 +94,8 @@ interval_map = {
 
 patterns = ["1 (Inside)", "3 (Outside)", "2U Red", "2U Green", "2D Red", "2D Green"]
 
-st.subheader("STRAT Pattern Filters")
-
-prev_patterns = st.multiselect(
-    "Previous Candle Patterns", patterns, patterns
-)
-curr_patterns = st.multiselect(
-    "Current Candle Patterns", patterns, patterns
-)
-
-st.subheader("FTFC Filters")
-
-ftfc_alignment_only = st.checkbox(
-    "Show only M + W aligned (FTFC)",
-    value=False,
-    help="Only show tickers where Monthly and Weekly continuity agree"
-)
+prev_patterns = st.multiselect("Previous Candle Patterns", patterns, patterns)
+curr_patterns = st.multiselect("Current Candle Patterns", patterns, patterns)
 
 scan_button = st.button("Run Scanner")
 
@@ -105,19 +105,38 @@ scan_button = st.button("Run Scanner")
 if scan_button:
     results = []
 
-    with st.spinner("Scanning market..."):
+    with st.spinner("Downloading data and scanning market..."):
+
+        # -----------------------
+        # Batch downloads
+        # -----------------------
+        main_data = batch_download(
+            TICKERS,
+            period="9mo",
+            interval=interval_map[timeframe]
+        )
+
+        weekly_data = batch_download(
+            TICKERS,
+            period="6mo",
+            interval="1wk"
+        )
+
+        monthly_data = batch_download(
+            TICKERS,
+            period="12mo",
+            interval="1mo"
+        )
+
+        # -----------------------
+        # Loop through tickers
+        # -----------------------
         for ticker in TICKERS:
             try:
                 # -----------------------
-                # STRAT TIMEFRAME DATA
+                # Main timeframe (STRAT)
                 # -----------------------
-                data = yf.download(
-                    ticker,
-                    period="9mo",
-                    interval=interval_map[timeframe],
-                    progress=False,
-                )
-
+                data = main_data[ticker].dropna() if len(TICKERS) > 1 else main_data
                 if data.empty or len(data) < 3:
                     continue
 
@@ -134,38 +153,22 @@ if scan_button:
                 current_close = float(curr["Close"])
 
                 # -----------------------
-                # FTFC (MONTHLY + WEEKLY)
+                # FTFC (Monthly + Weekly)
                 # -----------------------
                 ftfc = []
-                ftfc_states = {}
 
-                weekly = yf.download(
-                    ticker, period="6mo", interval="1wk", progress=False
-                )
+                weekly = weekly_data[ticker].dropna() if len(TICKERS) > 1 else weekly_data
                 if not weekly.empty:
                     w_open = weekly.iloc[-1]["Open"]
-                    ftfc_states["W"] = "Bullish" if current_close > w_open else "Bearish"
-                    ftfc.append(f"W: {ftfc_states['W']}")
+                    ftfc.append("W: Bullish" if current_close > w_open else "W: Bearish")
 
-                monthly = yf.download(
-                    ticker, period="12mo", interval="1mo", progress=False
-                )
+                monthly = monthly_data[ticker].dropna() if len(TICKERS) > 1 else monthly_data
                 if not monthly.empty:
                     m_open = monthly.iloc[-1]["Open"]
-                    ftfc_states["M"] = "Bullish" if current_close > m_open else "Bearish"
-                    ftfc.append(f"M: {ftfc_states['M']}")
+                    ftfc.append("M: Bullish" if current_close > m_open else "M: Bearish")
 
                 # -----------------------
-                # FTFC ALIGNMENT FILTER
-                # -----------------------
-                if ftfc_alignment_only:
-                    if len(ftfc_states) < 2:
-                        continue
-                    if ftfc_states["M"] != ftfc_states["W"]:
-                        continue
-
-                # -----------------------
-                # RESULTS
+                # Append results
                 # -----------------------
                 results.append({
                     "Ticker": ticker,
@@ -173,12 +176,15 @@ if scan_button:
                     "Current Candle": curr_candle,
                     "Direction": "Up" if curr["Close"] > curr["Open"] else "Down",
                     "Close Price": round(current_close, 2),
-                    "FTFC": ", ".join(ftfc),
+                    "FTFC": ", ".join(ftfc)
                 })
 
             except Exception:
                 continue
 
+    # -----------------------
+    # Display results
+    # -----------------------
     if results:
         df = pd.DataFrame(results)
         st.success(f"Found {len(df)} matching tickers")
