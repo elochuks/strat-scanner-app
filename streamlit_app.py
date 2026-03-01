@@ -30,20 +30,15 @@ def load_tickers():
     etfs = [
         # Index ETFs
         "SPY", "IVV", "VOO", "QQQ", "DIA", "IWM",
-
         # Sector ETFs
         "XLF", "XLK", "XLE", "XLY", "XLP", "XLV",
         "XLI", "XLB", "XLRE", "XLU", "XLC",
-
         # Growth / Value
         "VUG", "VTV", "IWF", "IWD",
-
         # Bonds
         "TLT", "IEF", "SHY", "LQD", "HYG",
-
         # Commodities
         "GLD", "SLV", "USO", "UNG",
-
         # Volatility / Inverse
         "VXX", "SQQQ", "TQQQ"
     ]
@@ -144,6 +139,9 @@ curr_patterns = st.multiselect(
     default=available_patterns,
 )
 
+# Optional: Relative Volume filter
+min_rvol = st.number_input("Minimum Relative Volume (RVOL)", value=1.0, step=0.1)
+
 scan_button = st.button("Run Scanner")
 
 # =====================================================
@@ -155,16 +153,15 @@ if scan_button:
     with st.spinner("Scanning market..."):
         for ticker in TICKERS:
             try:
-                # Download main interval data
                 data = yf.download(
                     ticker,
-                    period="9mo",
+                    period="2y",  # increased for stable higher timeframes
                     interval=interval_map[timeframe],
                     progress=False,
                     auto_adjust=False,
                 )
 
-                if data.empty or len(data) < 3:
+                if data.empty or len(data) < 21:
                     continue
 
                 prev_prev = data.iloc[-3]
@@ -174,19 +171,32 @@ if scan_button:
                 prev_candle = strat_type(prev_prev, prev)
                 curr_candle = strat_type(prev, curr)
 
+                # =========================
+                # Relative Volume (20 period)
+                # =========================
+                rvol = None
+                if "Volume" in data.columns:
+                    avg_volume = data["Volume"].rolling(20).mean().iloc[-2]
+                    curr_volume = data["Volume"].iloc[-1]
+
+                    if avg_volume and avg_volume != 0:
+                        rvol = round(float(curr_volume) / float(avg_volume), 2)
+
+                # Apply STRAT + RVOL filters
                 if (
                     (not prev_patterns or prev_candle in prev_patterns)
                     and (not curr_patterns or curr_candle in curr_patterns)
+                    and (rvol is not None and rvol >= min_rvol)
                 ):
 
                     # -----------------------
-                    # Calculate FTFC (Timeframe Continuity)
+                    # Calculate FTFC
                     # -----------------------
                     ftfc_result = []
 
-                    # Monthly data
                     monthly_data = yf.download(
-                        ticker, period="12mo", interval="1mo", progress=False, auto_adjust=False
+                        ticker, period="12mo", interval="1mo",
+                        progress=False, auto_adjust=False
                     )
                     if not monthly_data.empty:
                         current_month_open = monthly_data.iloc[-1]["Open"]
@@ -195,9 +205,9 @@ if scan_button:
                         elif float(curr["Close"]) < float(current_month_open):
                             ftfc_result.append("M: Bearish")
 
-                    # Weekly data
                     weekly_data = yf.download(
-                        ticker, period="12mo", interval="1wk", progress=False, auto_adjust=False
+                        ticker, period="12mo", interval="1wk",
+                        progress=False, auto_adjust=False
                     )
                     if not weekly_data.empty:
                         current_week_open = weekly_data.iloc[-1]["Open"]
@@ -208,7 +218,6 @@ if scan_button:
 
                     ftfc_str = ", ".join(ftfc_result) if ftfc_result else "N/A"
 
-                    # Append result with FTFC
                     results.append(
                         {
                             "Ticker": ticker,
@@ -216,6 +225,7 @@ if scan_button:
                             "Current Candle": curr_candle,
                             "Direction": "Up" if float(curr["Close"]) > float(curr["Open"]) else "Down",
                             "Close Price": round(float(curr["Close"]), 2),
+                            "Relative Volume (20)": rvol,
                             "FTFC": ftfc_str,
                         }
                     )
@@ -225,6 +235,7 @@ if scan_button:
 
     if results:
         df = pd.DataFrame(results)
+        df = df.sort_values(by="Relative Volume (20)", ascending=False)
         st.success(f"Found {len(df)} matching tickers")
         st.dataframe(df, use_container_width=True)
     else:
