@@ -5,71 +5,91 @@ import pandas as pd
 st.set_page_config(page_title="STRAT Scanner", layout="wide")
 
 # =====================================================
-# LOAD TICKERS
+# LOAD TICKERS (HARDENED & CLOUD-SAFE)
 # =====================================================
+
 @st.cache_data(ttl=86400)
 def load_tickers():
     tickers = set()
 
+    # -----------------------------
+    # S&P 500 (stable & live)
+    # -----------------------------
     try:
         sp500_url = (
             "https://raw.githubusercontent.com/"
             "datasets/s-and-p-500-companies/master/data/constituents.csv"
         )
         sp500_df = pd.read_csv(sp500_url)
-        tickers.update(sp500_df["Symbol"].dropna().astype(str).tolist())
+        tickers.update(sp500_df["Symbol"].dropna().tolist())
     except Exception as e:
         st.warning(f"S&P 500 load failed: {e}")
 
+    # -----------------------------
+    # ETFs (curated, stable list)
+    # -----------------------------
     etfs = [
+        # Index ETFs
         "SPY", "IVV", "VOO", "QQQ", "DIA", "IWM",
+
+        # Sector ETFs
         "XLF", "XLK", "XLE", "XLY", "XLP", "XLV",
         "XLI", "XLB", "XLRE", "XLU", "XLC",
+
+        # Growth / Value
         "VUG", "VTV", "IWF", "IWD",
+
+        # Bonds
         "TLT", "IEF", "SHY", "LQD", "HYG",
+
+        # Commodities
         "GLD", "SLV", "USO", "UNG",
+
+        # Volatility / Inverse
         "VXX", "SQQQ", "TQQQ"
     ]
-
-    indexes = [
-        "^GSPC",
-        "^NDX",
-        "^DJI",
-        "^RUT",
-        "^VIX",
-    ]
-
     tickers.update(etfs)
+
+    # -----------------------------
+    # Indexes (Yahoo symbols)
+    # -----------------------------
+    indexes = [
+        "^GSPC",  # S&P 500
+        "^NDX",   # Nasdaq 100
+        "^DJI",   # Dow Jones
+        "^RUT",   # Russell 2000
+        "^VIX",   # Volatility Index
+    ]
     tickers.update(indexes)
 
-    cleaned = []
-    for ticker in tickers:
-        ticker = ticker.strip().replace(".", "-")
-        if ticker:
-            cleaned.append(ticker)
+    # -----------------------------
+    # Final cleanup
+    # -----------------------------
+    tickers = sorted(tickers)
 
-    if not cleaned:
+    if not tickers:
         raise RuntimeError("No tickers loaded")
 
-    return sorted(set(cleaned))
-
+    return tickers
 
 TICKERS = load_tickers()
 
 # =====================================================
 # STRAT CANDLE LOGIC WITH COLOR
 # =====================================================
+
 def strat_type(prev, curr):
     prev_h = float(prev["High"])
     prev_l = float(prev["Low"])
-
     curr_h = float(curr["High"])
     curr_l = float(curr["Low"])
     curr_o = float(curr["Open"])
     curr_c = float(curr["Close"])
 
-    candle_color = "Green" if curr_c >= curr_o else "Red"
+    # Determine candle color
+    candle_color = "Green" if curr_c > curr_o else "Red"
 
+    # STRAT logic
     if curr_h < prev_h and curr_l > prev_l:
         return "1 (Inside)"
     elif curr_h > prev_h and curr_l < prev_l:
@@ -81,125 +101,37 @@ def strat_type(prev, curr):
     else:
         return "Undefined"
 
-
-# =====================================================
-# DATA FUNCTION
-# =====================================================
-@st.cache_data(ttl=3600)
-def get_data(ticker, timeframe):
-    interval_map = {
-        "Daily": "1d",
-        "Weekly": "1wk",
-        "Monthly": "1mo",
-    }
-
-    period_map = {
-        "Daily": "1y",
-        "Weekly": "3y",
-        "Monthly": "10y",
-    }
-
-    df = yf.Ticker(ticker).history(
-        period=period_map[timeframe],
-        interval=interval_map[timeframe],
-        auto_adjust=False
-    )
-
-    if df.empty:
-        return pd.DataFrame()
-
-    required_cols = ["Open", "High", "Low", "Close", "Volume"]
-
-    if not all(col in df.columns for col in required_cols):
-        return pd.DataFrame()
-
-    return df[required_cols].dropna()
-
-
-# =====================================================
-# RELATIVE VOLUME
-# =====================================================
-def calculate_rvol(df):
-    if len(df) < 22:
-        return None
-
-    current_volume = float(df.iloc[-2]["Volume"])
-    avg_volume = float(df.iloc[-22:-2]["Volume"].mean())
-
-    if avg_volume == 0:
-        return None
-
-    return round(current_volume / avg_volume, 2)
-
-
-# =====================================================
-# FTFC
-# =====================================================
-def get_ftfc(ticker, close_price):
-    ftfc_result = []
-
-    try:
-        monthly_data = yf.Ticker(ticker).history(
-            period="5y",
-            interval="1mo",
-            auto_adjust=False
-        )
-
-        if not monthly_data.empty:
-            current_month_open = float(monthly_data.iloc[-1]["Open"])
-
-            if close_price > current_month_open:
-                ftfc_result.append("M: Bullish")
-            elif close_price < current_month_open:
-                ftfc_result.append("M: Bearish")
-            else:
-                ftfc_result.append("M: Neutral")
-
-    except Exception:
-        ftfc_result.append("M: N/A")
-
-    try:
-        weekly_data = yf.Ticker(ticker).history(
-            period="1y",
-            interval="1wk",
-            auto_adjust=False
-        )
-
-        if not weekly_data.empty:
-            current_week_open = float(weekly_data.iloc[-1]["Open"])
-
-            if close_price > current_week_open:
-                ftfc_result.append("W: Bullish")
-            elif close_price < current_week_open:
-                ftfc_result.append("W: Bearish")
-            else:
-                ftfc_result.append("W: Neutral")
-
-    except Exception:
-        ftfc_result.append("W: N/A")
-
-    return ", ".join(ftfc_result) if ftfc_result else "N/A"
-
-
 # =====================================================
 # UI
 # =====================================================
+
 st.title("📊 STRAT Scanner")
-st.caption(f"Scanning **{len(TICKERS)}** tickers: S&P 500 + ETFs + Indexes")
+st.caption(f"Scanning {len(TICKERS)} tickers (S&P 500 + ETFs + Indexes)")
+
+# Timeframes
 
 timeframe = st.selectbox(
     "Select Timeframe",
-    ["Daily", "Weekly", "Monthly"]
+    ["4-Hour", "2-Day", "Daily", "2-Week", "Weekly", "Monthly", "3-Month"],
 )
+
+interval_map = {
+    "4-Hour": "4h",
+    "2-Day": "2d",
+    "Daily": "1d",
+    "2-Week": "2wk",
+    "Weekly": "1wk",
+    "Monthly": "1mo",
+    "3-Month": "3mo",
+}
+
+# STRAT patterns with color options
 
 available_patterns = [
     "1 (Inside)",
     "3 (Outside)",
-    "2U Red",
-    "2U Green",
-    "2D Red",
-    "2D Green",
-    "Undefined"
+    "2U Red", "2U Green",
+    "2D Red", "2D Green"
 ]
 
 st.subheader("STRAT Pattern Filters")
@@ -216,143 +148,89 @@ curr_patterns = st.multiselect(
     default=available_patterns,
 )
 
-show_debug = st.checkbox("Show Debug Info", value=False)
-
 scan_button = st.button("Run Scanner")
 
 # =====================================================
 # SCANNER
 # =====================================================
+
 if scan_button:
     results = []
-    debug_rows = []
-    errors = []
-
-    progress = st.progress(0)
 
     with st.spinner("Scanning market..."):
-        for i, ticker in enumerate(TICKERS):
+        for ticker in TICKERS:
             try:
-                data = get_data(ticker, timeframe)
+                # Download main interval data
+                data = yf.download(
+                    ticker,
+                    period="9mo",
+                    interval=interval_map[timeframe],
+                    progress=False,
+                    auto_adjust=False,
+                )
 
-                if data.empty or len(data) < 4:
-                    errors.append({
-                        "Ticker": ticker,
-                        "Error": "Not enough usable data"
-                    })
+                if data.empty or len(data) < 3:
                     continue
 
-                # Use closed candles only
-                prev_prev = data.iloc[-4]
-                prev = data.iloc[-3]
-                curr = data.iloc[-2]
+                prev_prev = data.iloc[-3]
+                prev = data.iloc[-2]
+                curr = data.iloc[-1]
 
                 prev_candle = strat_type(prev_prev, prev)
                 curr_candle = strat_type(prev, curr)
 
-                debug_rows.append({
-                    "Ticker": ticker,
-                    "Previous Candle": prev_candle,
-                    "Current Candle": curr_candle
-                })
+                if (
+                    (not prev_patterns or prev_candle in prev_patterns)
+                    and (not curr_patterns or curr_candle in curr_patterns)
+                ):
 
-                if prev_candle not in prev_patterns:
-                    continue
+                    # -----------------------
+                    # Calculate FTFC (Timeframe Continuity)
+                    # -----------------------
+                    ftfc_result = []
 
-                if curr_candle not in curr_patterns:
-                    continue
+                    # Monthly data
+                    monthly_data = yf.download(
+                        ticker, period="12mo", interval="1mo", progress=False, auto_adjust=False
+                    )
+                    if not monthly_data.empty:
+                        current_month_open = monthly_data.iloc[-1]["Open"]
+                        if float(curr["Close"]) > float(current_month_open):
+                            ftfc_result.append("M: Bullish")
+                        elif float(curr["Close"]) < float(current_month_open):
+                            ftfc_result.append("M: Bearish")
 
-                open_price = float(curr["Open"])
-                high_price = float(curr["High"])
-                low_price = float(curr["Low"])
-                close_price = float(curr["Close"])
-                volume = int(curr["Volume"])
+                    # Weekly data
+                    weekly_data = yf.download(
+                        ticker, period="12mo", interval="1wk", progress=False, auto_adjust=False
+                    )
+                    if not weekly_data.empty:
+                        current_week_open = weekly_data.iloc[-1]["Open"]
+                        if float(curr["Close"]) > float(current_week_open):
+                            ftfc_result.append("W: Bullish")
+                        elif float(curr["Close"]) < float(current_week_open):
+                            ftfc_result.append("W: Bearish")
 
-                ftfc_str = get_ftfc(ticker, close_price)
+                    ftfc_str = ", ".join(ftfc_result) if ftfc_result else "N/A"
 
-                results.append({
-                    "Ticker": ticker,
-                    "Previous Candle": prev_candle,
-                    "Current Candle": curr_candle,
-                    "Direction": "Up" if close_price >= open_price else "Down",
-                    "Open": round(open_price, 2),
-                    "High": round(high_price, 2),
-                    "Low": round(low_price, 2),
-                    "Close Price": round(close_price, 2),
-                    "Volume": volume,
-                    "RVOL": calculate_rvol(data),
-                    "FTFC": ftfc_str,
-                })
+                    # Append result with FTFC
+                    results.append(
+                        {
+                            "Ticker": ticker,
+                            "Previous Candle": prev_candle,
+                            "Current Candle": curr_candle,
+                            "Direction": "Up" if float(curr["Close"]) > float(curr["Open"]) else "Down",
+                            "Close Price": round(float(curr["Close"]), 2),
+                            "FTFC": ftfc_str,
+                        }
+                    )
 
-            except Exception as e:
-                errors.append({
-                    "Ticker": ticker,
-                    "Error": str(e)
-                })
-
-            progress.progress((i + 1) / len(TICKERS))
+            except Exception:
+                continue
 
     if results:
         df = pd.DataFrame(results)
-
         st.success(f"Found {len(df)} matching tickers")
-
-        st.subheader("All Matches")
         st.dataframe(df, use_container_width=True)
-
-        bullish_df = df[
-            df["Current Candle"].isin(
-                ["2U Green", "1 (Inside)", "3 (Outside)"]
-            )
-        ]
-
-        bearish_df = df[
-            df["Current Candle"].isin(
-                ["2D Red", "3 (Outside)"]
-            )
-        ]
-
-        st.subheader("Bullish Candidates")
-        st.dataframe(bullish_df, use_container_width=True)
-
-        st.subheader("Bearish Candidates")
-        st.dataframe(bearish_df, use_container_width=True)
-
-        csv = df.to_csv(index=False).encode("utf-8")
-
-        st.download_button(
-            "Download Results as CSV",
-            csv,
-            "strat_scan_results.csv",
-            "text/csv",
-        )
-
     else:
         st.warning("No tickers matched the selected STRAT criteria.")
-
-    if show_debug:
-        if debug_rows:
-            debug_df = pd.DataFrame(debug_rows)
-
-            st.subheader("Current Candle Pattern Counts")
-            st.dataframe(
-                debug_df["Current Candle"]
-                .value_counts()
-                .reset_index(),
-                use_container_width=True
-            )
-
-            st.subheader("Previous Candle Pattern Counts")
-            st.dataframe(
-                debug_df["Previous Candle"]
-                .value_counts()
-                .reset_index(),
-                use_container_width=True
-            )
-
-            st.subheader("Debug Rows")
-            st.dataframe(debug_df, use_container_width=True)
-
-        if errors:
-            st.subheader("Errors")
-            st.dataframe(pd.DataFrame(errors), use_container_width=True)
