@@ -17,7 +17,7 @@ def load_tickers():
             "datasets/s-and-p-500-companies/master/data/constituents.csv"
         )
         sp500_df = pd.read_csv(sp500_url)
-        tickers.update(sp500_df["Symbol"].dropna().tolist())
+        tickers.update(sp500_df["Symbol"].dropna().astype(str).tolist())
     except Exception as e:
         st.warning(f"S&P 500 load failed: {e}")
 
@@ -36,13 +36,20 @@ def load_tickers():
     tickers.update(etfs)
     tickers.update(indexes)
 
-    return sorted(tickers)
+    # Yahoo uses BRK-B instead of BRK.B
+    cleaned = []
+    for t in tickers:
+        t = t.strip().replace(".", "-")
+        if t:
+            cleaned.append(t)
+
+    return sorted(set(cleaned))
 
 
 TICKERS = load_tickers()
 
 # =====================================================
-# DATA HELPERS
+# HELPERS
 # =====================================================
 def flatten_columns(df):
     if isinstance(df.columns, pd.MultiIndex):
@@ -145,15 +152,15 @@ def get_data(ticker, timeframe):
     else:
         return pd.DataFrame()
 
-    required_cols = ["Open", "High", "Low", "Close", "Volume"]
-
     if df.empty:
         return pd.DataFrame()
+
+    required_cols = ["Open", "High", "Low", "Close", "Volume"]
 
     if not all(col in df.columns for col in required_cols):
         return pd.DataFrame()
 
-    return df.dropna()
+    return df[required_cols].dropna()
 
 
 # =====================================================
@@ -167,7 +174,7 @@ def strat_type(prev, curr):
     curr_o = float(curr["Open"])
     curr_c = float(curr["Close"])
 
-    candle_color = "Green" if curr_c > curr_o else "Red"
+    candle_color = "Green" if curr_c >= curr_o else "Red"
 
     if curr_h < prev_h and curr_l > prev_l:
         return "1 (Inside)"
@@ -179,6 +186,19 @@ def strat_type(prev, curr):
         return f"2D {candle_color}"
     else:
         return "Undefined"
+
+
+def calculate_rvol(df):
+    if len(df) < 22:
+        return None
+
+    current_volume = float(df.iloc[-2]["Volume"])
+    avg_volume = float(df["Volume"].iloc[-22:-2].mean())
+
+    if avg_volume == 0:
+        return None
+
+    return round(current_volume / avg_volume, 2)
 
 
 def get_ftfc(ticker, close_price):
@@ -231,19 +251,6 @@ def get_ftfc(ticker, close_price):
     return ", ".join(result) if result else "N/A"
 
 
-def calculate_rvol(df):
-    if len(df) < 21:
-        return None
-
-    current_volume = float(df.iloc[-2]["Volume"])
-    avg_volume = float(df["Volume"].iloc[-21:-1].mean())
-
-    if avg_volume == 0:
-        return None
-
-    return round(current_volume / avg_volume, 2)
-
-
 # =====================================================
 # UI
 # =====================================================
@@ -252,7 +259,7 @@ st.caption(f"Scanning **{len(TICKERS)}** tickers: S&P 500 + ETFs + Indexes")
 
 timeframe = st.selectbox(
     "Select Timeframe",
-    ["4-Hour", "2-Day", "Daily", "2-Week", "Weekly", "Monthly", "3-Month"],
+    ["Daily", "Weekly", "Monthly", "4-Hour", "2-Day", "2-Week", "3-Month"],
 )
 
 available_patterns = [
@@ -276,9 +283,10 @@ prev_patterns = st.multiselect(
 curr_patterns = st.multiselect(
     "Current Closed Candle Pattern",
     options=available_patterns,
-    default=["2U Green", "2D Red", "1 (Inside)", "3 (Outside)"],
+    default=available_patterns,
 )
 
+show_debug = st.checkbox("Show debug pattern counts", value=True)
 show_errors = st.checkbox("Show ticker errors", value=False)
 
 scan_button = st.button("Run Scanner")
@@ -289,6 +297,7 @@ scan_button = st.button("Run Scanner")
 if scan_button:
     results = []
     errors = []
+    pattern_debug = []
 
     progress = st.progress(0)
 
@@ -297,11 +306,14 @@ if scan_button:
             try:
                 data = get_data(ticker, timeframe)
 
-                # Need at least 4 candles because we avoid the live candle
                 if data.empty or len(data) < 4:
+                    errors.append({
+                        "Ticker": ticker,
+                        "Error": "Not enough data returned"
+                    })
                     continue
 
-                # Use only CLOSED candles
+                # Use closed candles only.
                 prev_prev = data.iloc[-4]
                 prev = data.iloc[-3]
                 curr = data.iloc[-2]
@@ -309,19 +321,25 @@ if scan_button:
                 prev_candle = strat_type(prev_prev, prev)
                 curr_candle = strat_type(prev, curr)
 
+                pattern_debug.append({
+                    "Ticker": ticker,
+                    "Previous Candle": prev_candle,
+                    "Current Candle": curr_candle
+                })
+
                 if prev_candle not in prev_patterns:
                     continue
 
                 if curr_candle not in curr_patterns:
                     continue
 
-                close_price = float(curr["Close"])
                 open_price = float(curr["Open"])
                 high_price = float(curr["High"])
                 low_price = float(curr["Low"])
+                close_price = float(curr["Close"])
+                volume = int(curr["Volume"])
 
-                direction = "Up" if close_price > open_price else "Down"
-
+                direction = "Up" if close_price >= open_price else "Down"
                 ftfc = get_ftfc(ticker, close_price)
                 rvol = calculate_rvol(data)
 
@@ -335,6 +353,7 @@ if scan_button:
                     "High": round(high_price, 2),
                     "Low": round(low_price, 2),
                     "Close": round(close_price, 2),
+                    "Volume": volume,
                     "RVOL": rvol,
                     "FTFC": ftfc,
                 })
@@ -347,21 +366,23 @@ if scan_button:
 
             progress.progress((i + 1) / len(TICKERS))
 
+    # =====================================================
+    # RESULTS
+    # =====================================================
     if results:
         df = pd.DataFrame(results)
 
         st.success(f"Found {len(df)} matching tickers")
 
-        bullish_df = df[df["Current Candle"].str.contains("2U Green|1 \\(Inside\\)|3 \\(Outside\\)", regex=True)]
-        bearish_df = df[df["Current Candle"].str.contains("2D Red", regex=True)]
-
         st.subheader("All Matches")
         st.dataframe(df, use_container_width=True)
 
-        st.subheader("Bullish / Watchlist Candidates")
+        st.subheader("Bullish Candidates")
+        bullish_df = df[df["Current Candle"].isin(["2U Green", "1 (Inside)", "3 (Outside)"])]
         st.dataframe(bullish_df, use_container_width=True)
 
         st.subheader("Bearish Candidates")
+        bearish_df = df[df["Current Candle"].isin(["2D Red", "3 (Outside)"])]
         st.dataframe(bearish_df, use_container_width=True)
 
         csv = df.to_csv(index=False).encode("utf-8")
@@ -376,6 +397,33 @@ if scan_button:
     else:
         st.warning("No tickers matched the selected STRAT criteria.")
 
+    # =====================================================
+    # DEBUG OUTPUT
+    # =====================================================
+    if show_debug and pattern_debug:
+        debug_df = pd.DataFrame(pattern_debug)
+
+        st.subheader("Debug: Pattern Counts")
+
+        st.write("Current Candle Pattern Counts")
+        st.dataframe(
+            debug_df["Current Candle"].value_counts().reset_index().rename(
+                columns={"index": "Pattern", "Current Candle": "Count"}
+            ),
+            use_container_width=True
+        )
+
+        st.write("Previous Candle Pattern Counts")
+        st.dataframe(
+            debug_df["Previous Candle"].value_counts().reset_index().rename(
+                columns={"index": "Pattern", "Previous Candle": "Count"}
+            ),
+            use_container_width=True
+        )
+
+        st.write("Sample Debug Rows")
+        st.dataframe(debug_df.head(50), use_container_width=True)
+
     if show_errors and errors:
-        st.subheader("Errors")
+        st.subheader("Ticker Errors")
         st.dataframe(pd.DataFrame(errors), use_container_width=True)
