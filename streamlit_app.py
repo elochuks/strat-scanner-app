@@ -4,9 +4,6 @@ import pandas as pd
 
 st.set_page_config(page_title="STRAT Scanner", layout="wide")
 
-# =========================
-# TICKERS
-# =========================
 @st.cache_data(ttl=86400)
 def load_tickers():
     tickers = set()
@@ -25,9 +22,7 @@ def load_tickers():
         "HYG", "GLD", "SLV", "USO"
     ]
 
-    major_indexes = [
-        "^GSPC", "^NDX", "^DJI", "^RUT", "^VIX"
-    ]
+    major_indexes = ["^GSPC", "^NDX", "^DJI", "^RUT", "^VIX"]
 
     tickers.update(curated_etfs)
     tickers.update(major_indexes)
@@ -37,9 +32,7 @@ def load_tickers():
 
 TICKERS = load_tickers()
 
-# =========================
-# STRAT LOGIC
-# =========================
+
 def candle_color(row):
     if row["Close"] > row["Open"]:
         return "Green"
@@ -86,9 +79,6 @@ def get_direction(candle_type):
         return "Other"
 
 
-# =========================
-# DATA FETCH
-# =========================
 @st.cache_data(ttl=1800)
 def fetch_data(ticker, period, interval):
     try:
@@ -114,14 +104,9 @@ def fetch_data(ticker, period, interval):
         return None
 
 
-# =========================
-# APP UI
-# =========================
 st.title("STRAT Stock Scanner")
 
-st.write(
-    "Scan S&P 500 stocks, curated ETFs, and major indexes for STRAT candle patterns."
-)
+st.write("Scan S&P 500 stocks, curated ETFs, and major indexes for STRAT candle patterns.")
 
 timeframe_options = {
     "Daily": {"period": "6mo", "interval": "1d"},
@@ -148,13 +133,19 @@ patterns = [
 previous_patterns = st.multiselect(
     "Choose Previous Candle Pattern",
     patterns,
-    default=patterns
+    default=[]
 )
 
 current_patterns = st.multiselect(
     "Choose Current Candle Pattern",
     patterns,
-    default=patterns
+    default=[]
+)
+
+match_logic = st.radio(
+    "Scan Logic",
+    ["Previous OR Current", "Previous AND Current"],
+    index=0
 )
 
 max_tickers = st.slider(
@@ -167,51 +158,59 @@ max_tickers = st.slider(
 
 run_scan = st.button("Run Scanner")
 
-# =========================
-# SCANNER
-# =========================
 if run_scan:
-    results = []
-
-    tf = timeframe_options[selected_timeframe]
-    scan_list = TICKERS[:max_tickers]
-
-    progress = st.progress(0)
-    status = st.empty()
-
-    for i, ticker in enumerate(scan_list):
-        status.write(f"Scanning {ticker}...")
-
-        df = fetch_data(ticker, tf["period"], tf["interval"])
-
-        if df is None or len(df) < 3:
-            progress.progress((i + 1) / len(scan_list))
-            continue
-
-        prior_reference = df.iloc[-3]
-        previous_candle = df.iloc[-2]
-        current_candle = df.iloc[-1]
-
-        previous_type = strat_candle_type(previous_candle, prior_reference)
-        current_type = strat_candle_type(current_candle, previous_candle)
-
-        if previous_type in previous_patterns and current_type in current_patterns:
-            results.append({
-                "Ticker": ticker,
-                "Previous Candle": previous_type,
-                "Current Candle": current_type,
-                "Direction": get_direction(current_type),
-                "Close Price": round(float(current_candle["Close"]), 2)
-            })
-
-        progress.progress((i + 1) / len(scan_list))
-
-    status.empty()
-
-    results_df = pd.DataFrame(results)
-
-    if not results_df.empty:
-        st.success(f"Found {len(results_df)} matching tickers.")
-        st.dataframe(results_df, use_container_width=True)
+    if not previous_patterns and not current_patterns:
+        st.warning("Select at least one previous or current candle pattern.")
     else:
-        st.warning("No tickers matched the selected STRAT criteria.")
+        results = []
+
+        tf = timeframe_options[selected_timeframe]
+        scan_list = TICKERS[:max_tickers]
+
+        progress = st.progress(0)
+        status = st.empty()
+
+        for i, ticker in enumerate(scan_list):
+            status.write(f"Scanning {ticker}...")
+
+            df = fetch_data(ticker, tf["period"], tf["interval"])
+
+            if df is None or len(df) < 3:
+                progress.progress((i + 1) / len(scan_list))
+                continue
+
+            prior_reference = df.iloc[-3]
+            previous_candle = df.iloc[-2]
+            current_candle = df.iloc[-1]
+
+            previous_type = strat_candle_type(previous_candle, prior_reference)
+            current_type = strat_candle_type(current_candle, previous_candle)
+
+            previous_match = previous_type in previous_patterns
+            current_match = current_type in current_patterns
+
+            if match_logic == "Previous OR Current":
+                matched = previous_match or current_match
+            else:
+                matched = previous_match and current_match
+
+            if matched:
+                results.append({
+                    "Ticker": ticker,
+                    "Previous Candle": previous_type,
+                    "Current Candle": current_type,
+                    "Direction": get_direction(current_type),
+                    "Close Price": round(float(current_candle["Close"]), 2)
+                })
+
+            progress.progress((i + 1) / len(scan_list))
+
+        status.empty()
+
+        results_df = pd.DataFrame(results)
+
+        if not results_df.empty:
+            st.success(f"Found {len(results_df)} matching tickers.")
+            st.dataframe(results_df, use_container_width=True)
+        else:
+            st.warning("No tickers matched the selected STRAT criteria.")
